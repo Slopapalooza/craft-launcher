@@ -1174,19 +1174,54 @@ pub mod windows {
 
     use super::*;
 
-    fn msiexec() -> PathBuf {
-        std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from).join(r"System32\msiexec.exe")
+    /// `%SystemRoot%\System32`, where Windows' own tools are run from by full path.
+    pub fn system32() -> PathBuf {
+        std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from).join("System32")
     }
+
+    fn msiexec() -> PathBuf {
+        system32().join("msiexec.exe")
+    }
+
+    /// The Windows Installer's exit code `1618`: another installation holds its lock.
+    pub const ANOTHER_INSTALL: &str = "another installation is in progress. Wait for it to finish, then try again.";
 
     fn explain(code: Option<i32>) -> Result<(), String> {
         match code {
             Some(0 | 3010 | 1641) => Ok(()),
             Some(1602) => Err("cancelled".into()),
-            Some(1618) => Err("another installation is in progress. Wait for it to finish, then try again.".into()),
+            Some(1618) => Err(ANOTHER_INSTALL.into()),
             Some(1925 | 1303) => Err("Windows didn't allow the install (administrator permission is needed)".into()),
             Some(c) => Err(format!("the Windows Installer stopped with error {c}")),
             None => Err("the Windows Installer was interrupted".into()),
         }
+    }
+
+    /// Runs an MSI with no UI at all and no restart, for the update service (LocalSystem, which
+    /// needs no permission and has nobody to show a window to). Errors and progress notes go to
+    /// `log`. `Ok(true)` when Windows wants a restart to finish replacing files in use.
+    pub fn run_msi_quiet(msi: &Path, log: &Path, stop: &Stop, phase: &mut dyn FnMut(JobPhase)) -> Result<bool, String> {
+        let mut restart = false;
+        in_turn(stop, phase, JobPhase::Installing, || {
+            let status = process::command(msiexec())
+                .arg("/i")
+                .arg(msi)
+                .args(["/qn", "/norestart", "/l*"])
+                .arg(log)
+                .status()
+                .map_err(|e| format!("couldn't start the Windows Installer ({e})"))?;
+            restart = matches!(status.code(), Some(3010 | 1641));
+            explain(status.code())
+        })?;
+        Ok(restart)
+    }
+
+    /// Starts an MSI as [`run_msi_quiet`] does, without waiting for it: for the update service's
+    /// own package, which stops the service (this process) to replace it and starts the new one.
+    pub fn start_msi_quiet(msi: &Path, log: &Path) -> Result<(), String> {
+        let mut cmd = process::command(msiexec());
+        cmd.arg("/i").arg(msi).args(["/qn", "/norestart", "/l*"]).arg(log);
+        process::spawn_detached(cmd).map_err(|e| format!("couldn't start the Windows Installer ({e})"))
     }
 
     /// Runs an MSI with a progress window and no restart. Windows asks for permission itself.
