@@ -268,7 +268,7 @@ impl Engine {
             release.version_label()
         );
         let result = match self.scope {
-            Scope::Machine => self.apply_machine(app, release, asset, stop, phase),
+            Scope::Machine => self.apply_machine(app, inst, release, asset, stop, phase),
             Scope::User => self.apply_user(app, inst, release, asset, kind, stop, phase),
         };
         match result {
@@ -285,11 +285,26 @@ impl Engine {
         }
     }
 
-    /// The update service's install: download and check, then run the package quietly. `Ok(true)`
-    /// when Windows wants a restart to finish.
+    /// An install job of this engine's. It only ever updates what's there, so it never writes over
+    /// a folder's contents.
+    fn job<'a>(&'a self, stop: &'a Stop, phase: &'a mut dyn FnMut(JobPhase)) -> Job<'a> {
+        Job { http: &self.http, paths: &self.paths, stop, phase, install_locations: &self.options.install_locations, replace: false }
+    }
+
+    /// The update service's install: download and check, then run the package quietly into the
+    /// folder `inst` (what's registered for all users) is in. `Ok(true)` when Windows wants a
+    /// restart to finish.
     #[cfg(windows)]
-    fn apply_machine(&self, app: &CraftApp, release: &Release, asset: &Asset, stop: &Stop, phase: &mut dyn FnMut(JobPhase)) -> Result<bool, String> {
-        let file = install::download(release, asset, &mut Job { http: &self.http, paths: &self.paths, stop, phase })?;
+    fn apply_machine(
+        &self,
+        app: &CraftApp,
+        inst: &Installed,
+        release: &Release,
+        asset: &Asset,
+        stop: &Stop,
+        phase: &mut dyn FnMut(JobPhase),
+    ) -> Result<bool, String> {
+        let file = install::download(release, asset, &mut self.job(stop, phase))?;
         let names: Vec<&str> = app.names().collect();
         let expect = crate::msi::Expect { names, version: release.version.as_ref(), signer: Some(crate::msi::SIGNER) };
         // A download that matches its checksum but fails these is kept (the next run would only
@@ -300,7 +315,10 @@ impl Engine {
         phase(JobPhase::Installing);
         let logs = self.paths.logs();
         let _ = std::fs::create_dir_all(&logs);
-        let restart = install::windows::run_msi_quiet(&file, &logs.join(format!("msi-{}.log", app.id)), stop, phase)?;
+        // Into the folder the installed copy is in, as the launcher's own updates do: an app put in
+        // a chosen folder stays there. It comes from what's registered here, never from a request.
+        let folder = install::msi_update_folder(inst);
+        let restart = install::windows::run_msi_quiet(&file, folder.as_deref(), &logs.join(format!("msi-{}.log", app.id)), stop, phase)?;
         let _ = std::fs::remove_file(&file);
         // What's registered now is the truth.
         let now = crate::detect::windows::machine_install(app).and_then(|i| i.version);
@@ -319,6 +337,7 @@ impl Engine {
     fn apply_machine(
         &self,
         _app: &CraftApp,
+        _inst: &Installed,
         _release: &Release,
         _asset: &Asset,
         _stop: &Stop,
@@ -342,7 +361,7 @@ impl Engine {
         let path = self.paths.manifest();
         let mut manifest = Manifest::load(&path);
         let record = manifest.apps.get(app.id).cloned();
-        let mut job = Job { http: &self.http, paths: &self.paths, stop, phase };
+        let mut job = self.job(stop, phase);
         let new_record = install::install(app, release, asset, kind, Some(inst), record.as_ref(), &mut job)?;
         let changed = match new_record {
             Some(r) => {
@@ -373,7 +392,7 @@ impl Engine {
     /// new one.
     #[cfg(windows)]
     pub fn start_own_update(&self, launcher: &Release, asset: &Asset, stop: &Stop) -> Result<(), String> {
-        let file = install::download(launcher, asset, &mut Job { http: &self.http, paths: &self.paths, stop, phase: &mut |_| {} })?;
+        let file = install::download(launcher, asset, &mut self.job(stop, &mut |_| {}))?;
         let expect =
             crate::msi::Expect { names: vec![crate::service::DISPLAY_NAME], version: launcher.version.as_ref(), signer: Some(crate::msi::SIGNER) };
         crate::msi::verify(&file, &expect)?;

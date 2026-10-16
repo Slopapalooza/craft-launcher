@@ -88,7 +88,8 @@ impl Server {
     /// A service keeping its downloads, saved answers and state in `paths`, with the
     /// administrator's settings from `policy`.
     pub fn new(paths: Paths, policy: fn() -> Policy) -> Result<Arc<Self>, String> {
-        let options = BackendOptions { kinds: Vec::new(), prereleases: policy().prereleases };
+        // No install folders: the service only updates, and an update stays where its copy is.
+        let options = BackendOptions { prereleases: policy().prereleases, ..BackendOptions::default() };
         let engine = Engine::new(paths.clone(), Scope::Machine, options)?;
         // Leftovers: a paused download stays a month, a finished one kept after a failed install a week.
         http::clean_downloads(&paths.downloads(), Duration::from_secs(30 * 86_400), Duration::from_secs(7 * 86_400));

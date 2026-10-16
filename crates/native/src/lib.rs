@@ -20,6 +20,8 @@ pub mod msi;
 pub mod packages;
 pub mod paths;
 pub mod policy;
+#[cfg(windows)]
+pub mod portable;
 pub mod process;
 pub mod proxy;
 pub mod queue;

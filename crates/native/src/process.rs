@@ -56,7 +56,8 @@ pub fn run(program: &str, args: &[&str], timeout: Duration) -> Result<String, St
     run_command(cmd, program, timeout)
 }
 
-/// [`run`] for a command already set up (arguments, environment); `program` names it in errors.
+/// Runs a configured helper (arguments, environment) with bounded output and a timeout, as [`run`]
+/// does; `program` names it in errors.
 pub fn run_command(mut cmd: Command, program: &str, timeout: Duration) -> Result<String, String> {
     let mut child =
         cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("couldn't start {program} ({e})"))?;
