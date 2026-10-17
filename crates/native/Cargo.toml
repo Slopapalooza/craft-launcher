@@ -21,6 +21,8 @@ artcraft-launcher-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+# The launcher's and the updater's log files (logging.rs).
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 dirs = "6"
 tempfile = "3"
 sha2 = "0.10"
@@ -37,3 +39,6 @@ plist = "1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.55"
+# Resolves junctions/symlinks without forcing short MSI paths into the verbatim namespace.
+dunce = "1"
+zip = { version = "8", default-features = false, features = ["deflate"] }

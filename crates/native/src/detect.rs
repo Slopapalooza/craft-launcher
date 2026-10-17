@@ -59,8 +59,8 @@ fn from_manifest(app: &CraftApp, manifest: &Manifest) -> Option<Installed> {
     }
     // On macOS the bundle itself is the truth (the app may have updated itself).
     #[cfg(target_os = "macos")]
-    if let Some(found) = macos::read_bundle(app, &rec.path) {
-        return Some(found);
+    if rec.kind == artcraft_launcher_core::PackageKind::Dmg {
+        return macos::read_bundle(app, &rec.path);
     }
     Some(Installed {
         version: version::parse(&rec.version),
@@ -184,17 +184,33 @@ pub mod windows {
 
     const UNINSTALL: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
 
+    /// Reads VERSIONINFO without executing the downloaded application. The path is data in
+    /// a child-only environment variable, never interpolated into PowerShell source.
+    pub fn executable_version(path: &std::path::Path) -> Option<artcraft_launcher_core::version::Version> {
+        let path = std::fs::canonicalize(path).ok()?;
+        let mut command = crate::process::command("powershell.exe");
+        command.args([
+            "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [System.Diagnostics.FileVersionInfo]::GetVersionInfo($env:ARTCRAFT_VERSION_FILE).ProductVersion",
+        ]).env("ARTCRAFT_VERSION_FILE", path);
+        let output = crate::process::run_command(command, "powershell.exe", std::time::Duration::from_secs(5)).ok()?;
+        version::parse(output.trim())
+    }
+
     /// An MSI install found in the registry.
     pub struct MsiInstall {
         pub product_code: String,
         pub version: Option<artcraft_launcher_core::version::Version>,
         pub exe: Option<PathBuf>,
+        /// Installed for every user (registered under HKLM), not just the current one.
+        pub machine: bool,
     }
 
     /// Every Windows Installer entry for `app`, newest first.
     pub fn msi_installs(app: &CraftApp) -> Vec<MsiInstall> {
         let mut out = Vec::new();
         for (hive, flags) in [(HKEY_LOCAL_MACHINE, KEY_WOW64_64KEY), (HKEY_LOCAL_MACHINE, KEY_WOW64_32KEY), (HKEY_CURRENT_USER, 0)] {
+            let machine = hive == HKEY_LOCAL_MACHINE;
             let Ok(root) = RegKey::predef(hive).open_subkey_with_flags(UNINSTALL, KEY_READ | flags) else { continue };
             for code in root.enum_keys().flatten() {
                 let Ok(key) = root.open_subkey_with_flags(&code, KEY_READ | flags) else { continue };
@@ -205,8 +221,8 @@ pub mod windows {
                 }
                 let version = key.get_value::<String, _>("DisplayVersion").ok().and_then(|v| version::parse(&v));
                 let location: String = key.get_value("InstallLocation").unwrap_or_default();
-                let exe = exe_path(app, (!location.is_empty()).then(|| PathBuf::from(location)));
-                out.push(MsiInstall { product_code: code, version, exe });
+                let exe = exe_path(app, (!location.is_empty()).then(|| PathBuf::from(location)).or_else(|| install_dir(app)));
+                out.push(MsiInstall { product_code: code, version, exe, machine });
             }
         }
         out.sort_by(|a, b| match (&b.version, &a.version) {
@@ -216,6 +232,15 @@ pub mod windows {
             (None, None) => std::cmp::Ordering::Equal,
         });
         out
+    }
+
+    /// The folder the app's MSI remembers for its next upgrade, which is where it went when the
+    /// launcher chose the folder.
+    fn install_dir(app: &CraftApp) -> Option<PathBuf> {
+        [KEY_WOW64_64KEY, KEY_WOW64_32KEY].into_iter().find_map(|flags| {
+            let key = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags(format!(r"SOFTWARE\{}", app.name), KEY_READ | flags).ok()?;
+            key.get_value::<String, _>("InstallDir").ok().filter(|d| !d.is_empty()).map(PathBuf::from)
+        })
     }
 
     /// The app's exe: from `App Paths`, the install folder, or Program Files.
@@ -243,13 +268,22 @@ pub mod windows {
     }
 
     pub fn detect(app: &CraftApp) -> Option<Installed> {
-        let m = msi_installs(app).into_iter().next()?;
-        Some(Installed {
+        msi_installs(app).into_iter().next().map(|m| installed(app, m))
+    }
+
+    /// The newest Windows Installer copy of `app` installed for every user: what the update
+    /// service (LocalSystem) may replace. A copy only one user installed is theirs to update.
+    pub fn machine_install(app: &CraftApp) -> Option<Installed> {
+        msi_installs(app).into_iter().find(|m| m.machine).map(|m| installed(app, m))
+    }
+
+    fn installed(app: &CraftApp, m: MsiInstall) -> Installed {
+        Installed {
             version: m.version,
             source: InstallSource::Msi,
             location: m.exe.map_or_else(|| app.name.to_string(), |p| p.display().to_string()),
             package: Some(m.product_code),
-        })
+        }
     }
 }
 
@@ -365,11 +399,6 @@ pub mod linux {
     /// AppImages of `app` in any of the usual folders, newest first.
     pub fn appimages(app: &CraftApp) -> Vec<(PathBuf, Option<version::Version>)> {
         appimages_in(app, &appimage_dirs())
-    }
-
-    /// AppImages of `app` in the launcher's own folder only (the ones an update replaces).
-    pub fn launcher_appimages(app: &CraftApp) -> Vec<PathBuf> {
-        appimage_dir().map(|d| appimages_in(app, &[d]).into_iter().map(|(p, _)| p).collect()).unwrap_or_default()
     }
 
     pub fn detect(app: &CraftApp, snapshot: &Snapshot) -> Option<Installed> {

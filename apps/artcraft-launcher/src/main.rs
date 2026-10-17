@@ -5,7 +5,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-mod logging;
 mod motion;
 mod settings_file;
 #[cfg(target_os = "macos")]
@@ -23,20 +22,22 @@ use std::time::Duration;
 
 use artcraft_launcher_core::protocol::Backend;
 use artcraft_launcher_native::single_instance::{self, Instance};
-use artcraft_launcher_native::{NativeBackend, login};
+use artcraft_launcher_native::{NativeBackend, logging, login};
 use artcraft_launcher_ui_egui::theme::Tokens;
 use artcraft_launcher_ui_egui::{Host, LauncherUi, Settings, TitleBar};
 use eframe::wgpu::rwh::{HasDisplayHandle, RawDisplayHandle};
 
 const APP_ID: &str = "ai.storyteller.artcraft-launcher";
 const SETTINGS_KEY: &str = "settings";
+/// The log file's name (`logs/artcraft-launcher.log`).
+const LOG_NAME: &str = "artcraft-launcher";
 
 type Wake = Arc<OnceLock<Box<dyn Fn() + Send + Sync>>>;
 
 fn main() -> ExitCode {
     // First, so the panic report and every start-up warning are recorded (`logging`).
-    let logs = logging::install();
-    logging::install_panic_hook();
+    let logs = logging::install(LOG_NAME, true);
+    logging::install_panic_hook(LOG_NAME);
     // Detect system language in the background so the first frame can use it.
     artcraft_launcher_ui_egui::i18n::detect_system_lang_in_background();
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -430,6 +431,14 @@ impl Host for DesktopHost {
 
     fn set_login_item(&mut self, on: bool) -> Result<(), String> {
         login::set_enabled(on)
+    }
+
+    fn pick_folder(&mut self, initial: Option<&str>) -> Option<String> {
+        let mut dialog = rfd::FileDialog::new();
+        if let Some(folder) = initial.filter(|p| std::path::Path::new(p).is_dir()) {
+            dialog = dialog.set_directory(folder);
+        }
+        dialog.pick_folder().and_then(|p| p.to_str().map(str::to_string))
     }
 
     fn reduce_motion(&self) -> bool {

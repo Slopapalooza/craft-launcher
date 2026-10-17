@@ -78,7 +78,7 @@ pub fn just_updated_to(paths: &Paths, release: &Release) -> bool {
     let Ok(text) = std::fs::read_to_string(marker(paths)) else { return false };
     let mut lines = text.lines();
     let (Some(tag), Some(at)) = (lines.next(), lines.next().and_then(|a| a.parse::<i64>().ok())) else { return false };
-    tag == release.tag && crate::now() - at < JUST_UPDATED_FOR
+    tag == release.tag && crate::now().checked_sub(at).is_some_and(|age| (0..JUST_UPDATED_FOR).contains(&age))
 }
 
 fn marker(paths: &Paths) -> PathBuf {
@@ -168,7 +168,7 @@ pub fn update(
     let (asset, _) = pick_asset(release, &[LAUNCHER.id], platform, &[install.kind()])
         .ok_or_else(|| format!("ArtCraft Launcher {} has no {} for {}", release.version_label(), install.kind().label(), platform.label()))?;
     let asset = asset.clone();
-    let mut job = Job { http, paths, stop, phase };
+    let mut job = Job { http, paths, stop, phase, install_locations: &Default::default(), replace: false };
     let file = install::download(release, &asset, &mut job)?;
     // The restart ends this process: nothing else may be under way.
     last()?;
@@ -181,7 +181,7 @@ pub fn update(
         #[cfg(target_os = "macos")]
         Install::MacApp(bundle) => {
             let existing = Installed { version: None, source: InstallSource::MacApp, location: bundle.display().to_string(), package: None };
-            let placed = install::macos::install_dmg(&LAUNCHER, &file, Some(&existing), paths, &install::macos::Expect::release(release));
+            let placed = install::macos::install_dmg(&LAUNCHER, &file, Some(&existing), None, paths, &install::macos::Expect::release(release));
             let _ = std::fs::remove_file(&file);
             let placed = placed?;
             relaunch_after_exit(pid, &[Path::new("/usr/bin/open").as_os_str(), placed.as_os_str()])
@@ -200,15 +200,7 @@ pub fn update(
             relaunch_after_exit(pid, &[exe.as_os_str()])
         }
         #[cfg(windows)]
-        Install::Msi(exe) => windows_helper(
-            pid,
-            &format!(
-                "Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\\msiexec.exe') -ArgumentList '/i',{},'/passive','/norestart' -Wait; Remove-Item -LiteralPath {} -ErrorAction SilentlyContinue",
-                ps_quote_arg(&file),
-                ps_quote(&file)
-            ),
-            exe,
-        ),
+        Install::Msi(exe) => windows_helper(pid, &msi_update_step(&file)?, exe),
         #[cfg(windows)]
         Install::Portable(exe) => {
             let dir = exe.parent().ok_or("the launcher isn't in a folder")?;
@@ -289,9 +281,59 @@ fn ps_quote_arg(path: &Path) -> String {
     format!("'\"{}\"'", path.display().to_string().replace('\'', "''"))
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
+fn msi_update_step(file: &Path) -> Result<String, String> {
+    let file = install::msi_path(file)?;
+    Ok(format!(
+        "Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\\msiexec.exe') -ArgumentList '/i',{},'/passive','/norestart' -Wait; Remove-Item -LiteralPath {} -ErrorAction SilentlyContinue",
+        ps_quote_arg(&file),
+        ps_quote(&file)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn msi_self_update_uses_the_target_of_a_symlinked_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Launcher O'Brien.msi");
+        std::fs::write(&file, b"test package").unwrap();
+        let link = dir.path().join("cached.msi");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let step = msi_update_step(&link).unwrap();
+        let target = file.canonicalize().unwrap();
+        assert!(step.contains(&format!("-ArgumentList '/i',{},", ps_quote_arg(&target))), "{step}");
+        assert!(step.contains(&format!("Remove-Item -LiteralPath {} ", ps_quote(&target))), "{step}");
+    }
+
+    #[test]
+    fn a_missing_msi_cannot_schedule_a_self_update() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(msi_update_step(&dir.path().join("missing.msi")).is_err());
+    }
+
+    #[test]
+    fn a_corrupt_self_update_timestamp_does_not_overflow() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::under(dir.path());
+        let release = Release { tag: "v0.2.0".into(), ..Release::default() };
+        crate::paths::write_atomic(&marker(&paths), format!("v0.2.0\n{}\n", i64::MIN).as_bytes()).unwrap();
+        assert!(!just_updated_to(&paths, &release));
+    }
+
+    #[test]
+    fn a_future_self_update_timestamp_does_not_suppress_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::under(dir.path());
+        let release = Release { tag: "v0.2.0".into(), ..Release::default() };
+        for at in [crate::now() + JUST_UPDATED_FOR, i64::MAX] {
+            crate::paths::write_atomic(&marker(&paths), format!("v0.2.0\n{at}\n").as_bytes()).unwrap();
+            assert!(!just_updated_to(&paths, &release), "future timestamp {at}");
+        }
+    }
 
     #[test]
     fn a_version_just_installed_is_not_offered_again() {
@@ -371,10 +413,13 @@ mod tests {
         let existing = Installed { version: None, source: InstallSource::MacApp, location: current.display().to_string(), package: None };
         // An unsigned test bundle: the signature check has its own tests in `install`.
         let expect = install::macos::Expect { team: None, version: None };
-        let placed = install::macos::install_dmg(&LAUNCHER, &dmg, Some(&existing), &Paths::under(dir.path()), &expect).unwrap();
+        let placed = install::macos::install_dmg(&LAUNCHER, &dmg, Some(&existing), None, &Paths::under(dir.path()), &expect).unwrap();
         assert_eq!(placed, current);
         assert_eq!(std::fs::read_to_string(current.join("Contents/MacOS/ArtCraft Launcher")).unwrap(), "0.2.0");
-        assert!(!dir.path().join("Applications/.ArtCraft Launcher.app.partial").exists());
+        assert_eq!(
+            std::fs::read_dir(&apps).unwrap().map(|e| e.unwrap().file_name()).collect::<Vec<_>>(),
+            [std::ffi::OsString::from("ArtCraft Launcher.app")]
+        );
     }
 
     #[test]

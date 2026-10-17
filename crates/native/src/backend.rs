@@ -9,17 +9,18 @@ use artcraft_launcher_core::catalog::{LAUNCHER, LAUNCHER_ID};
 use artcraft_launcher_core::feed::{Feed, FeedAnswer};
 use artcraft_launcher_core::platform::{Arch, Os, Platform, pick_asset};
 use artcraft_launcher_core::protocol::{
-    Backend, BackendOptions, CANCELLED, Capabilities, Command, Event, INSTALL_CANCELLED, JobPhase, LatestRelease, Origin, PAUSED, PausedDownload,
-    Source,
+    Backend, BackendOptions, CANCELLED, Capabilities, Command, Event, INSTALL_CANCELLED, JobPhase, LatestRelease, MachineAutoUpdate, Origin, PAUSED,
+    PausedDownload, Source,
 };
 use artcraft_launcher_core::release::{Asset, Release};
-use artcraft_launcher_core::{CraftApp, Installed, PackageKind, SUITE, version};
+use artcraft_launcher_core::{CraftApp, InstallSource, Installed, PackageKind, SUITE, version};
 
 use crate::feed_throttle::{self, FeedThrottle, Outcome};
 use crate::http::{self, Http, Stop};
 use crate::install::{self, Job};
 use crate::manifest::Manifest;
 use crate::paths::Paths;
+use crate::process;
 use crate::source::{GitHubSource, ReleaseSource};
 
 /// The longest the launcher's own update waits for other installs to end before it gives up
@@ -36,7 +37,7 @@ const EARLY_GITHUB_EVERY: i64 = 5 * 60;
 /// Tries at the feed per check (after the very first poll). The pause between tries is the
 /// [`FeedThrottle`]'s: seconds during the first load, so a check retries; a minute or more after
 /// that, so a check then tries once and the retries come from the next checks.
-const FEED_ATTEMPTS: usize = 3;
+pub(crate) const FEED_ATTEMPTS: usize = 3;
 /// The longest a check waits on the [`FeedThrottle`] before carrying on without the feed.
 const MAX_THROTTLE_WAIT: i64 = 10;
 /// After everything has loaded, the feed counts as seriously failed (and GitHub takes over)
@@ -79,6 +80,9 @@ struct Shared {
     feed_throttle: Mutex<FeedThrottle>,
     /// Apps whose details pictures are on their way (a second request meanwhile does nothing).
     pictures_busy: Mutex<std::collections::HashSet<&'static str>>,
+    /// The update service's background installs as the UI was last told (`Some(None)`: no
+    /// service); `None` before the first look.
+    machine_auto_update: Mutex<Option<Option<MachineAutoUpdate>>>,
 }
 
 impl Shared {
@@ -96,6 +100,9 @@ pub struct NativeBackend {
     platform: Option<Platform>,
     /// How this launcher is installed, when it can replace itself.
     self_install: Option<crate::self_update::Install>,
+    /// Works with the ArtCraft Launcher Update Service when one is running (Windows; never in
+    /// tests, which mustn't reach a real one).
+    service: bool,
 }
 
 impl NativeBackend {
@@ -135,11 +142,58 @@ impl NativeBackend {
             feed_throttle: Mutex::new(FeedThrottle::load(&paths.feed_throttle(), crate::now())),
             pictures_busy: Mutex::new(std::collections::HashSet::new()),
             last_check: Mutex::new(None),
+            machine_auto_update: Mutex::new(None),
         });
-        let backend = Self { shared, paths, http, source, platform: native_platform(), self_install: crate::self_update::current() };
+        let backend =
+            Self { shared, paths, http, source, platform: native_platform(), self_install: crate::self_update::current(), service: cfg!(windows) };
         backend.replay_cache();
         backend.detect_all();
+        backend.refresh_machine_auto_update();
         backend
+    }
+
+    /// Tells the UI about the update service's background installs (the computer's own
+    /// "Automatically download and install updates", in HKLM) when they changed since it was last
+    /// told: an administrator may change them, or install or remove the service, while the
+    /// launcher runs. A registry read, so quick enough for the UI thread.
+    fn refresh_machine_auto_update(&self) {
+        if !self.service {
+            return;
+        }
+        let setting = crate::policy::machine_auto_update();
+        let mut told = self.shared.machine_auto_update.lock().unwrap_or_else(PoisonError::into_inner);
+        if *told != Some(setting) {
+            *told = Some(setting);
+            self.shared.emit(Event::MachineAutoUpdate { setting, error: None });
+        }
+    }
+
+    /// Turns the update service's background installs on or off for the whole computer: Windows
+    /// asks for an administrator's permission (UAC), so a user who isn't one can't change them
+    /// without an administrator's password. The UI hears how it ended (the setting as it now is),
+    /// whether it changed or not.
+    fn set_machine_auto_update(&self, on: bool) {
+        if !self.service {
+            return;
+        }
+        let shared = self.shared.clone();
+        std::thread::spawn(move || {
+            let error = match crate::policy::set_auto_update_elevated(on) {
+                Ok(true) => {
+                    log::info!("background installs turned {} for this computer", if on { "on" } else { "off" });
+                    None
+                }
+                // The permission prompt was dismissed: nothing changed, and that's no error.
+                Ok(false) => None,
+                Err(e) => {
+                    log::warn!("background installs weren't changed: {e}");
+                    Some(e)
+                }
+            };
+            let setting = crate::policy::machine_auto_update();
+            *shared.machine_auto_update.lock().unwrap_or_else(PoisonError::into_inner) = Some(setting);
+            shared.emit(Event::MachineAutoUpdate { setting, error });
+        });
     }
 
     /// Shows the saved answers from the last run straight away, before any network request: the
@@ -207,6 +261,8 @@ impl NativeBackend {
     /// GitHub for anything the feed can't vouch for (apps it doesn't list, entries more than a
     /// day old, or no answer at all), at most once an hour per app unless `force`.
     fn check(&self, force: bool) {
+        // An administrator may have changed the service's background installs since the last look.
+        self.refresh_machine_auto_update();
         let (Some(source), Some(http)) = (self.source.clone(), self.http.clone()) else {
             for app in &SUITE {
                 self.shared.emit(Event::Latest {
@@ -310,7 +366,8 @@ impl NativeBackend {
         });
     }
 
-    fn start_job(&self, app_id: &str, uninstall: bool) {
+    fn start_job(&self, app_id: &str, work: Work) {
+        let uninstall = work == Work::Uninstall;
         let Some(app) = CraftApp::by_id(app_id) else { return };
         log::info!("{}: starting {} job", app.name, if uninstall { "uninstall" } else { "install/update" });
         let stop = Arc::new(Stop::default());
@@ -335,6 +392,7 @@ impl NativeBackend {
         let http = self.http.clone();
         let platform = self.platform;
         let options = self.options();
+        let service = self.service;
         std::thread::spawn(move || {
             let existing = shared.installed.lock().unwrap_or_else(PoisonError::into_inner).get(app.id).cloned();
             let record = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner).apps.get(app.id).cloned();
@@ -352,7 +410,14 @@ impl NativeBackend {
                     None => Err(format!("{} isn't installed", app.name)),
                 }
             } else {
-                let r = run_install(app, &shared, &paths, http.as_ref(), platform, &options, existing.as_ref(), record.as_ref(), &stop);
+                let replace = work == Work::Replace;
+                // The update service only updates what's installed; installing over a folder's
+                // contents (Replace) is always the launcher's, with its prompt.
+                let delegated = if replace { None } else { via_service(service, app, &shared, existing.as_ref(), &stop) };
+                let r = match delegated {
+                    Some(result) => result,
+                    None => run_install(app, &shared, &paths, http.as_ref(), platform, &options, existing.as_ref(), record.as_ref(), &stop, replace),
+                };
                 // Stopped by the connection rather than by the user: say so, and how to go on.
                 match r {
                     Err(e) if e == PAUSED && stop.check().is_ok() => {
@@ -443,6 +508,13 @@ impl NativeBackend {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Work {
+    Install,
+    Replace,
+    Uninstall,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_install(
     app: &CraftApp,
@@ -454,6 +526,7 @@ fn run_install(
     existing: Option<&Installed>,
     record: Option<&crate::manifest::Record>,
     stop: &Stop,
+    replace: bool,
 ) -> Result<String, String> {
     if let Some(msg) = existing.and_then(|e| install::managed_elsewhere(app, e, false)) {
         return Err(msg);
@@ -467,8 +540,21 @@ fn run_install(
         .get(app.id)
         .cloned()
         .ok_or("the latest release hasn't been found yet. Check for updates first.")?;
-    let (asset, kind) = planned_asset(app, &release, platform, options, existing, record)
-        .ok_or_else(|| format!("{} {} has no download for {}", app.name, release.version_label(), platform.label()))?;
+    let (asset, kind) = planned_asset(app, &release, platform, options, existing, record).ok_or_else(|| {
+        if platform.os == artcraft_launcher_core::Os::Linux
+            && options.install_locations.folder(app.id).is_some()
+            && existing.is_none()
+            && record.is_none()
+        {
+            "this release has no AppImage for a custom install folder".to_string()
+        } else {
+            format!("{} {} has no download for {}", app.name, release.version_label(), platform.label())
+        }
+    })?;
+    if !replace && let Some(path) = install::occupied(app, &asset, kind, existing, record, &options.install_locations, paths)? {
+        shared.emit(Event::Occupied { app: app.id.to_string(), path: path.display().to_string() });
+        return Err(format!("{} already exists", path.display()));
+    }
     let mut last_emit = Instant::now() - Duration::from_secs(1);
     let mut phase = |p: JobPhase| {
         // Downloads report thousands of times; the UI needs ~20 a second.
@@ -478,8 +564,16 @@ fn run_install(
         last_emit = Instant::now();
         shared.emit(Event::Progress { app: app.id.to_string(), phase: p });
     };
-    let mut job = Job { http, paths, stop, phase: &mut phase };
-    let new_record = install::install(app, &release, &asset, kind, existing, record, &mut job)?;
+    let mut job = Job { http, paths, stop, phase: &mut phase, install_locations: &options.install_locations, replace };
+    let mut commit_record = |record: &crate::manifest::Record| {
+        let mut manifest = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut updated = manifest.clone();
+        updated.apps.insert(app.id.to_string(), record.clone());
+        updated.save(&paths.manifest())?;
+        *manifest = updated;
+        Ok(())
+    };
+    let new_record = install::install_at(app, &release, &asset, kind, existing, record, &mut job, Some(&mut commit_record))?;
     {
         let mut m = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner);
         let changed = match new_record {
@@ -495,6 +589,32 @@ fn run_install(
         }
     }
     Ok(installed_text(app, existing.is_some(), &release))
+}
+
+/// On Windows, the update of an app installed for all users goes to the ArtCraft Launcher Update
+/// Service when one is running, which installs it without a UAC prompt (`service`). `None` when
+/// it's not one for the service (a new install, no service, an install for one user): the launcher
+/// installs it itself, as before.
+fn via_service(service: bool, app: &CraftApp, shared: &Shared, existing: Option<&Installed>, stop: &Stop) -> Option<Result<String, String>> {
+    if !service || existing.is_none_or(|i| i.source != InstallSource::Msi) {
+        return None;
+    }
+    let latest = shared.latest.lock().unwrap_or_else(PoisonError::into_inner).get(app.id).and_then(|r| r.version.clone());
+    let mut last_emit = Instant::now() - Duration::from_secs(1);
+    let mut phase = |p: JobPhase| {
+        if matches!(p, JobPhase::Downloading { done, total } if done != total && done != 0) && last_emit.elapsed() < Duration::from_millis(50) {
+            return;
+        }
+        last_emit = Instant::now();
+        shared.emit(Event::Progress { app: app.id.to_string(), phase: p });
+    };
+    match crate::service::delegate(app, latest.as_ref(), stop, &mut phase) {
+        crate::service::Delegated::Done(result) => Some(result),
+        crate::service::Delegated::Declined(why) => {
+            log::info!("{}: not through the update service ({why}); installing it here", app.name);
+            None
+        }
+    }
 }
 
 /// What a finished install tells the user.
@@ -577,7 +697,18 @@ fn planned_asset(
     record: Option<&crate::manifest::Record>,
 ) -> Option<(Asset, PackageKind)> {
     let stems: Vec<&str> = app.stems().collect();
-    let kinds = install::choose_kinds(existing, record, &options.kinds);
+    let custom_linux = platform.os == artcraft_launcher_core::Os::Linux
+        && !process::in_sandbox()
+        && existing.is_none()
+        && record.is_none()
+        && options.install_locations.folder(app.id).is_some();
+    let kinds = if existing.is_none() && record.is_some_and(|r| r.kind == PackageKind::PortableZip) {
+        vec![PackageKind::PortableZip]
+    } else if custom_linux {
+        vec![artcraft_launcher_core::PackageKind::AppImage]
+    } else {
+        install::choose_kinds(existing, record, &options.kinds)
+    };
     pick_asset(release, &stems, platform, &kinds).map(|(a, k)| (a.clone(), k))
 }
 
@@ -706,12 +837,12 @@ fn limit_notice(source_used: Source, limited_until: Option<i64>) -> Option<i64> 
 }
 
 /// The repo to ask GitHub about, following the feed's repo renames.
-fn feed_repo(feed: Option<&Feed>, app: &CraftApp) -> String {
+pub(crate) fn feed_repo(feed: Option<&Feed>, app: &CraftApp) -> String {
     feed.map_or_else(|| app.repo.to_string(), |f| f.repo_for(app))
 }
 
 /// What came of asking the feed during one check.
-enum FeedFetch {
+pub(crate) enum FeedFetch {
     Answered(Feed),
     /// Asked, without a good answer.
     Failed,
@@ -721,7 +852,7 @@ enum FeedFetch {
 
 /// Asks ArtCraft's release feed up to `attempts` times, as often as `throttle` allows (waiting at
 /// most [`MAX_THROTTLE_WAIT`] for it), saving a good answer.
-fn fetch_feed(http: &Http, paths: &Paths, url: &str, throttle: &Mutex<FeedThrottle>, attempts: usize) -> FeedFetch {
+pub(crate) fn fetch_feed(http: &Http, paths: &Paths, url: &str, throttle: &Mutex<FeedThrottle>, attempts: usize) -> FeedFetch {
     let mut asked = false;
     for attempt in 0..attempts.max(1) {
         let wait = throttle.lock().unwrap_or_else(PoisonError::into_inner).wait(crate::now());
@@ -776,7 +907,7 @@ fn fetch_feed(http: &Http, paths: &Paths, url: &str, throttle: &Mutex<FeedThrott
 
 /// The feed's address. `ARTCRAFT_LAUNCHER_FEED_URL` points at a staging server or a local copy
 /// (only `https://`, or plain `http://` on localhost).
-fn feed_url() -> String {
+pub(crate) fn feed_url() -> String {
     std::env::var("ARTCRAFT_LAUNCHER_FEED_URL")
         .ok()
         .filter(|u| u.starts_with("https://") || is_loopback(u))
@@ -797,7 +928,7 @@ fn is_loopback(url: &str) -> bool {
 /// there (never GitHub or ArtCraft's API), and its download links are trusted. Loopback only, so
 /// nothing but the developer's own builds can be installed this way, and only in builds with the
 /// `local-mirror` feature: release builds ignore the variable.
-fn local_mirror() -> Option<String> {
+pub(crate) fn local_mirror() -> Option<String> {
     if !cfg!(feature = "local-mirror") {
         return None;
     }
@@ -814,7 +945,7 @@ fn local_mirror() -> Option<String> {
 
 /// The local mirror's feed: `ARTCRAFT_LAUNCHER_FEED_URL` if set, else `release_info.json` beside
 /// the builds. Asked every check (it's on this machine), and never saved over ArtCraft's.
-fn local_feed(http: &Http, base: &str) -> Option<Feed> {
+pub(crate) fn local_feed(http: &Http, base: &str) -> Option<Feed> {
     let url = std::env::var("ARTCRAFT_LAUNCHER_FEED_URL").ok().filter(|u| is_loopback(u)).unwrap_or_else(|| format!("{base}release_info.json"));
     match http.get_feed(&url) {
         Ok(body) => {
@@ -832,7 +963,7 @@ fn local_feed(http: &Http, base: &str) -> Option<Feed> {
 }
 
 /// `app`'s latest release according to the local mirror. An app it doesn't list has no release.
-fn mirror_latest(app: &CraftApp, feed: Option<&Feed>, now: i64) -> (Option<LatestRelease>, Origin, Option<Source>) {
+pub(crate) fn mirror_latest(app: &CraftApp, feed: Option<&Feed>, now: i64) -> (Option<LatestRelease>, Origin, Option<Source>) {
     let latest = match feed.map(|f| f.answer(app, now)) {
         Some(FeedAnswer::Fresh(Some(r))) => LatestRelease::Found(r),
         Some(FeedAnswer::Fresh(None) | FeedAnswer::AskGitHub) => LatestRelease::None,
@@ -842,13 +973,13 @@ fn mirror_latest(app: &CraftApp, feed: Option<&Feed>, now: i64) -> (Option<Lates
 }
 
 /// The last saved feed answer, if any.
-fn load_feed(paths: &Paths) -> Option<Feed> {
+pub(crate) fn load_feed(paths: &Paths) -> Option<Feed> {
     std::fs::read_to_string(paths.feed_cache()).ok().and_then(|body| Feed::parse(&body))
 }
 
 /// The machine's real architecture: an x64 launcher on Windows on ARM should still pick ARM64
 /// builds.
-fn native_platform() -> Option<Platform> {
+pub(crate) fn native_platform() -> Option<Platform> {
     let mut p = Platform::current()?;
     if p.os == Os::Windows {
         let arch = std::env::var("PROCESSOR_ARCHITEW6432").or_else(|_| std::env::var("PROCESSOR_ARCHITECTURE")).unwrap_or_default();
@@ -896,8 +1027,9 @@ impl Backend for NativeBackend {
         match command {
             Command::CheckForUpdates { force } => self.check(force),
             Command::Detect => self.detect_all(),
-            Command::Install { app } => self.start_job(&app, false),
-            Command::Uninstall { app } => self.start_job(&app, true),
+            Command::Install { app } => self.start_job(&app, Work::Install),
+            Command::Replace { app } => self.start_job(&app, Work::Replace),
+            Command::Uninstall { app } => self.start_job(&app, Work::Uninstall),
             Command::Pause { app } => {
                 if let Some(stop) = self.shared.jobs.lock().unwrap_or_else(PoisonError::into_inner).get(&app) {
                     stop.pause();
@@ -940,6 +1072,7 @@ impl Backend for NativeBackend {
             }
             Command::UpdateLauncher => self.update_launcher(),
             Command::FetchScreenshots { app } => self.fetch_screenshots(&app),
+            Command::SetAutoUpdate { on } => self.set_machine_auto_update(on),
             Command::Configure(options) => {
                 let changed_pre = {
                     let mut o = self.shared.options.lock().unwrap_or_else(PoisonError::into_inner);
@@ -979,15 +1112,6 @@ impl Backend for NativeBackend {
     fn now(&self) -> i64 {
         crate::now()
     }
-}
-
-/// The launcher's own download for this machine, for "a new launcher is available".
-pub fn launcher_download(release: &Release, platform: Platform) -> Option<String> {
-    let kinds: &[artcraft_launcher_core::PackageKind] = match platform.os {
-        Os::Linux => &[artcraft_launcher_core::PackageKind::AppImage, artcraft_launcher_core::PackageKind::Deb],
-        _ => platform.default_kinds(),
-    };
-    pick_asset(release, &[LAUNCHER_ID], platform, kinds).map(|(a, _)| a.url.clone())
 }
 
 #[cfg(test)]
@@ -1041,6 +1165,7 @@ mod tests {
             feed_ok_at: Mutex::new(None),
             feed_throttle: Mutex::new(FeedThrottle::new()),
             pictures_busy: Mutex::new(std::collections::HashSet::new()),
+            machine_auto_update: Mutex::new(None),
         }
     }
 
@@ -1226,12 +1351,72 @@ mod tests {
         Release { assets, ..Release::default() }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_preference_selects_portable_and_existing_installs_keep_their_format() {
+        let app = CraftApp::by_id(APP).unwrap();
+        let platform = Platform { os: Os::Windows, arch: Arch::X64 };
+        let release = release("0.5.0");
+        let portable_options = BackendOptions { kinds: vec![PackageKind::PortableZip], ..Default::default() };
+        assert_eq!(planned_asset(app, &release, platform, &portable_options, None, None).unwrap().1, PackageKind::PortableZip);
+        let msi = Installed {
+            version: None,
+            source: artcraft_launcher_core::InstallSource::Msi,
+            location: r"C:\Apps\PhotoCraft\photocraft.exe".into(),
+            package: None,
+        };
+        assert_eq!(planned_asset(app, &release, platform, &portable_options, Some(&msi), None).unwrap().1, PackageKind::Msi);
+        let launcher = Installed {
+            version: None,
+            source: artcraft_launcher_core::InstallSource::Launcher,
+            location: r"D:\Craft Apps\PhotoCraft\photocraft.exe".into(),
+            package: None,
+        };
+        let record = crate::manifest::Record {
+            version: "0.4.0".into(),
+            kind: PackageKind::PortableZip,
+            path: launcher.location.clone().into(),
+            installed_at: 1,
+            files: vec![],
+            needs_root: false,
+        };
+        let msi_options = BackendOptions { kinds: vec![PackageKind::Msi], ..Default::default() };
+        assert_eq!(planned_asset(app, &release, platform, &msi_options, Some(&launcher), Some(&record)).unwrap().1, PackageKind::PortableZip);
+        assert_eq!(planned_asset(app, &release, platform, &msi_options, None, Some(&record)).unwrap().1, PackageKind::PortableZip);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_custom_linux_folder_requires_appimage_without_package_fallback() {
+        if process::in_sandbox() {
+            return;
+        }
+        let app = CraftApp::by_id(APP).unwrap();
+        let platform = Platform { os: Os::Linux, arch: Arch::X64 };
+        let options = BackendOptions {
+            kinds: vec![PackageKind::Deb],
+            install_locations: artcraft_launcher_core::protocol::InstallLocations { root: Some("/custom/apps".into()), ..Default::default() },
+            ..Default::default()
+        };
+        let mut release = release("0.5.0");
+        assert_eq!(planned_asset(app, &release, platform, &options, None, None).unwrap().1, PackageKind::AppImage);
+        release.assets.retain(|a| !a.name.ends_with(".AppImage"));
+        assert!(planned_asset(app, &release, platform, &options, None, None).is_none());
+        let existing =
+            Installed { version: None, source: artcraft_launcher_core::InstallSource::Deb, location: "/usr/bin/photocraft".into(), package: None };
+        let system = BackendOptions { kinds: options.kinds.clone(), ..Default::default() };
+        assert_eq!(
+            planned_asset(app, &release, platform, &options, Some(&existing), None),
+            planned_asset(app, &release, platform, &system, Some(&existing), None)
+        );
+    }
+
     /// A backend that knows `release("0.5.0")` and keeps its files under `root`.
     fn backend(root: &std::path::Path, platform: Platform, source: Option<Arc<dyn ReleaseSource>>) -> NativeBackend {
         let shared = shared();
         shared.latest.lock().unwrap().insert(APP.to_string(), release("0.5.0"));
         let shared = Arc::new(shared);
-        NativeBackend { shared, paths: Paths::under(root), http: None, source, platform: Some(platform), self_install: None }
+        NativeBackend { shared, paths: Paths::under(root), http: None, source, platform: Some(platform), self_install: None, service: false }
     }
 
     /// Reports again, and returns what the UI was last told about a kept download.
@@ -1269,6 +1454,19 @@ mod tests {
         backend.send(Command::Cancel { app: APP.to_string() });
         assert!(!dest.exists());
         assert_eq!(last_ready(backend.poll()), Some(false));
+    }
+
+    #[test]
+    fn without_the_update_service_the_setting_stays_the_users() {
+        let Some(platform) = native_platform() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        // `backend()` never works with a service (tests mustn't reach a real one), as on Linux or
+        // macOS, or Windows without the service: nothing to tell the UI, nothing to change.
+        let mut backend = backend(dir.path(), platform, None);
+        backend.refresh_machine_auto_update();
+        backend.send(Command::SetAutoUpdate { on: true });
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!backend.poll().iter().any(|e| matches!(e, Event::MachineAutoUpdate { .. })));
     }
 
     #[test]
