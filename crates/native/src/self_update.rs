@@ -151,6 +151,12 @@ fn detect(exe: &Path) -> Option<Install> {
     if process::capture("rpm", &["-q", LAUNCHER.id], t).is_some() {
         return Some(Install::Package(PackageKind::Rpm, exe.to_path_buf()));
     }
+    // A pacman install of the launcher. We detect the release's own Arch package (by bundle id).
+    // AUR builds (`artcraft-launcher`, `artcraft-launcher-bin`, `artcraft-launcher-git`) are left to
+    // pacman and the AUR helper.
+    if crate::detect::linux::has_pacman_db() && process::capture("pacman", &["-Q", &LAUNCHER.bundle_id()], t).is_some() {
+        return Some(Install::Package(PackageKind::ArchPkg, exe.to_path_buf()));
+    }
     None
 }
 
@@ -232,7 +238,8 @@ pub fn update(
         #[cfg(target_os = "macos")]
         Install::MacApp(bundle) => {
             let existing = Installed { version: None, source: InstallSource::MacApp, location: bundle.display().to_string(), package: None };
-            let placed = install::macos::install_dmg(&LAUNCHER, &file, Some(&existing), None, paths, &install::macos::Expect::release(release));
+            let placed =
+                install::macos::install_dmg(&LAUNCHER, &file, Some(&existing), None, false, paths, &install::macos::Expect::release(release));
             let _ = std::fs::remove_file(&file);
             let placed = placed?;
             relaunch_after_exit(pid, &[Path::new("/usr/bin/open").as_os_str(), placed.as_os_str()])
@@ -537,7 +544,7 @@ mod tests {
         let existing = Installed { version: None, source: InstallSource::MacApp, location: current.display().to_string(), package: None };
         // An unsigned test bundle: the signature check has its own tests in `install`.
         let expect = install::macos::Expect { team: None, version: None };
-        let placed = install::macos::install_dmg(&LAUNCHER, &dmg, Some(&existing), None, &Paths::under(dir.path()), &expect).unwrap();
+        let placed = install::macos::install_dmg(&LAUNCHER, &dmg, Some(&existing), None, false, &Paths::under(dir.path()), &expect).unwrap();
         assert_eq!(placed, current);
         assert_eq!(std::fs::read_to_string(current.join("Contents/MacOS/ArtCraft Launcher")).unwrap(), "0.2.0");
         assert_eq!(
@@ -568,6 +575,7 @@ mod tests {
             "artcraft-launcher-0.2.0-linux-x86_64.AppImage",
             "artcraft-launcher-0.2.0-linux-x86_64.deb",
             "artcraft-launcher-0.2.0-linux-x86_64.flatpak",
+            "artcraft-launcher-0.2.0-linux-x86_64.pkg.tar.zst",
             "artcraft-launcher-web-0.2.0.zip",
         ];
         let release = Release {
@@ -585,6 +593,7 @@ mod tests {
         assert_eq!(pick(Os::Linux, Install::AppImage(PathBuf::new()).kind()).as_deref(), Some(names[3]));
         assert_eq!(pick(Os::Linux, Install::Package(PackageKind::Deb, PathBuf::new()).kind()).as_deref(), Some(names[4]));
         assert_eq!(pick(Os::Linux, Install::Flatpak.kind()).as_deref(), Some(names[5]));
+        assert_eq!(pick(Os::Linux, Install::Package(PackageKind::ArchPkg, PathBuf::new()).kind()).as_deref(), Some(names[6]));
     }
 
     #[test]

@@ -443,7 +443,7 @@ fn decide(
     }
     let Some(platform) = platform else { return Plan::Blocked("this system isn't supported".into()) };
     let stems: Vec<&str> = app.stems().collect();
-    let mut kinds = install::choose_kinds(Some(inst), record, &options.kinds);
+    let mut kinds = install::choose_kinds(app, Some(inst), record, &options.kinds);
     // The update service installs Windows Installer packages only.
     if scope == Scope::Machine {
         kinds.retain(|k| *k == PackageKind::Msi);
