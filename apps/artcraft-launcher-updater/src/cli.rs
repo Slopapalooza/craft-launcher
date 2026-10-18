@@ -338,22 +338,28 @@ struct NotAnswering {
 fn update(options: Options, apps: &[String]) -> ExitCode {
     let mut progress = Progress::new(options.json);
     let mut results = Vec::new();
-    let mut here: Vec<String> = apps.to_vec();
+    // What the service left to this process (when it ran), and whether that's everything asked for.
+    let mut here: Vec<String> = Vec::new();
     let mut all_here = true;
+    // Apps the service reported on, which this process leaves alone.
+    let mut handled: Vec<String> = Vec::new();
     if !options.local && service::running() {
         match update_through_service(apps, &mut progress) {
             Ok(done) => {
                 // What the service may not touch (installed for one user, say), this process
                 // updates the launcher's way.
                 here = done.iter().filter(|r| matches!(r.outcome, Outcome::NotEligible { .. })).map(|r| r.app.clone()).collect();
+                handled = done.iter().filter(|r| !matches!(r.outcome, Outcome::NotEligible { .. })).map(|r| r.app.clone()).collect();
                 results.extend(done.into_iter().filter(|r| !matches!(r.outcome, Outcome::NotEligible { .. })));
-                all_here = false;
+                // Asked for every app, the service only looked at the ones installed for all
+                // users: the rest (a portable copy, say) are looked at here.
+                all_here = apps.is_empty();
             }
             Err(why) => progress.note(&format!("{why}; installing here instead")),
         }
     }
     if all_here || !here.is_empty() {
-        match update_here(&here, &mut progress) {
+        match update_here(if all_here { apps } else { &here }, &handled, &mut progress) {
             Ok(done) => results.extend(done),
             Err(e) => {
                 progress.note(&format!("couldn't update here: {e}"));
@@ -398,12 +404,17 @@ fn update_through_service(apps: &[String], progress: &mut Progress) -> Result<Ve
     }
 }
 
-/// `update` in this process: `apps`, or every app with an update when empty.
-fn update_here(apps: &[String], progress: &mut Progress) -> Result<Vec<AppResult>, String> {
+/// `update` in this process: `apps`, or every app with an update except those in `skip` when
+/// empty.
+fn update_here(apps: &[String], skip: &[String], progress: &mut Progress) -> Result<Vec<AppResult>, String> {
     let engine = Engine::new(Paths::new()?, Scope::User, BackendOptions::default())?;
     progress.note("Checking for updates...");
     let survey = engine.survey();
-    let targets: Vec<&Found> = if apps.is_empty() { survey.updates().collect() } else { apps.iter().filter_map(|id| survey.find(id)).collect() };
+    let targets: Vec<&Found> = if apps.is_empty() {
+        survey.updates().filter(|f| !skip.iter().any(|id| id == f.app.id)).collect()
+    } else {
+        apps.iter().filter_map(|id| survey.find(id)).collect()
+    };
     let mut results = Vec::new();
     for found in targets {
         let stop = Stop::default();

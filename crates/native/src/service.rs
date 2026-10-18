@@ -420,11 +420,12 @@ pub fn delegate(app: &CraftApp, latest: Option<&Version>, stop: &Stop, phase: &m
     }
     log::info!("{}: handing the update to the {DISPLAY_NAME}", app.name);
     let mut started = false;
-    let mut stop_sent = false;
+    let mut stopping = StopRequest::default();
     loop {
-        if !stop_sent && let Err(why) = stop.check() {
-            stop_job(app.id, why != PAUSED);
-            stop_sent = true;
+        if let Err(why) = stop.check()
+            && let Some(cancel) = stopping.asked(why != PAUSED)
+        {
+            stop_job(app.id, cancel);
         }
         let reply = match conn.next(Duration::from_millis(200)) {
             Ok(Some(reply)) => reply,
@@ -435,6 +436,9 @@ pub fn delegate(app: &CraftApp, latest: Option<&Version>, stop: &Stop, phase: &m
         match reply {
             Reply::Progress { phase: p, .. } => {
                 started = true;
+                if let Some(cancel) = stopping.progress(&p) {
+                    stop_job(app.id, cancel);
+                }
                 phase(p.into());
             }
             Reply::Finished { outcome, .. } => return delegated_result(app, latest, outcome),
@@ -443,6 +447,40 @@ pub fn delegate(app: &CraftApp, latest: Option<&Version>, stop: &Stop, phase: &m
             Reply::Done => return Delegated::Declined("the update service had nothing to say".into()),
             Reply::Status(_) | Reply::Working => {}
         }
+    }
+}
+
+/// When [`delegate`] tells the service to pause or cancel. The service has a job to stop only once
+/// the update itself starts: a request made while it still waits its turn or looks up releases
+/// finds none, so it's made again when the update's first step arrives. `Some(cancel)`: send it.
+#[derive(Debug, Default)]
+struct StopRequest {
+    /// The launcher asked, and whether it was to cancel.
+    asked: Option<bool>,
+    /// The service reported a step of the update itself, so its job exists.
+    job: bool,
+    /// The request went out before the job existed.
+    again: bool,
+}
+
+impl StopRequest {
+    /// The launcher's Pause (`cancel` false) or Cancel. Only the first one counts.
+    fn asked(&mut self, cancel: bool) -> Option<bool> {
+        if self.asked.is_some() {
+            return None;
+        }
+        self.asked = Some(cancel);
+        self.again = !self.job;
+        Some(cancel)
+    }
+
+    /// The service reported `phase`.
+    fn progress(&mut self, phase: &Phase) -> Option<bool> {
+        if matches!(phase, Phase::Waiting) {
+            return None;
+        }
+        self.job = true;
+        if std::mem::take(&mut self.again) { self.asked } else { None }
     }
 }
 
@@ -626,6 +664,25 @@ mod tests {
         // The launcher wants something newer than the service sees (a pre-release): its own way.
         assert!(matches!(done(Outcome::UpToDate { version: Some("0.8.1".into()) }), Delegated::Declined(_)));
         assert!(matches!(done(Outcome::UpToDate { version: None }), Delegated::Declined(_)));
+    }
+
+    #[test]
+    fn a_stop_asked_for_before_the_update_starts_is_sent_again_once_it_has() {
+        let downloading = Phase::Downloading { done: 1, total: 10 };
+        // Cancelled while the service waits its turn: sent now, and again at the first step.
+        let mut early = StopRequest::default();
+        assert_eq!(early.progress(&Phase::Waiting), None);
+        assert_eq!(early.asked(true), Some(true));
+        assert_eq!(early.asked(false), None, "only the first request counts");
+        assert_eq!(early.progress(&Phase::Waiting), None);
+        assert_eq!(early.progress(&downloading), Some(true));
+        assert_eq!(early.progress(&downloading), None);
+        assert_eq!(early.progress(&Phase::Installing), None);
+        // Paused mid-download: the job exists, so once is enough.
+        let mut late = StopRequest::default();
+        assert_eq!(late.progress(&downloading), None);
+        assert_eq!(late.asked(false), Some(false));
+        assert_eq!(late.progress(&downloading), None);
     }
 
     #[test]
