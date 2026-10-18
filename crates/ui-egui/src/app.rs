@@ -61,6 +61,10 @@ pub trait Host {
     fn pick_folder(&mut self, _initial: Option<&str>) -> Option<String> {
         None
     }
+    /// The URL to open when Discord is clicked. Defaults to the web link.
+    fn discord_url(&self) -> &'static str {
+        artcraft_launcher_core::catalog::DISCORD_URL
+    }
     /// Quit the launcher for real (not just hide to the tray).
     fn quit(&mut self) {}
 }
@@ -157,6 +161,8 @@ pub struct LauncherUi {
     pub(crate) machine_auto_update: Option<MachineAutoUpdate>,
     /// A change to `machine_auto_update` is waiting on Windows' permission prompt.
     pub(crate) machine_auto_update_pending: bool,
+    /// The URL or deep link to open when Discord is clicked.
+    pub(crate) discord_url: &'static str,
 }
 
 /// The language to draw in: the preference, or English where it needs a CJK font the system
@@ -217,6 +223,7 @@ impl LauncherUi {
             auto_update_attempted: std::collections::BTreeSet::new(),
             machine_auto_update: None,
             machine_auto_update_pending: false,
+            discord_url: artcraft_launcher_core::catalog::DISCORD_URL,
         }
     }
 
@@ -595,6 +602,9 @@ impl LauncherUi {
     /// Draws the launcher.
     pub fn ui(&mut self, ui: &mut egui::Ui, host: &mut dyn Host) {
         let ctx = ui.ctx().clone();
+        if host.title_bar() == TitleBar::MacOs && ctx.input_mut(|i| i.consume_key(egui::Modifiers::MAC_CMD, egui::Key::M)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
         // Set the current language for this frame based on settings.
         let lang = effective_lang(&self.settings.language);
         set_current(lang);
@@ -623,6 +633,7 @@ impl LauncherUi {
             motion::apply(&ctx, self.reduce_motion);
             self.applied_motion = Some(self.reduce_motion);
         }
+        self.discord_url = host.discord_url();
         let tokens = Tokens::get(&ctx);
         if self.entries.iter().any(|e| e.job.is_some()) || self.checking {
             ctx.request_repaint_after(Duration::from_millis(50));
