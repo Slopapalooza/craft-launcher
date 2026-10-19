@@ -306,7 +306,7 @@ impl Engine {
     ) -> Result<bool, String> {
         let file = install::download(release, asset, &mut self.job(stop, phase))?;
         let names: Vec<&str> = app.names().collect();
-        let expect = crate::msi::Expect { names, version: release.version.as_ref(), signer: Some(crate::msi::SIGNER) };
+        let expect = crate::msi::Expect { names, version: release.version.as_ref(), signer: Some(crate::msi::SIGNER_SUBJECT) };
         // A download that matches its checksum but fails these is kept (the next run would only
         // fetch the same file again); the download folder's cleanup takes it in a week.
         crate::msi::verify(&file, &expect)?;
@@ -393,8 +393,11 @@ impl Engine {
     #[cfg(windows)]
     pub fn start_own_update(&self, launcher: &Release, asset: &Asset, stop: &Stop) -> Result<(), String> {
         let file = install::download(launcher, asset, &mut self.job(stop, &mut |_| {}))?;
-        let expect =
-            crate::msi::Expect { names: vec![crate::service::DISPLAY_NAME], version: launcher.version.as_ref(), signer: Some(crate::msi::SIGNER) };
+        let expect = crate::msi::Expect {
+            names: vec![crate::service::DISPLAY_NAME],
+            version: launcher.version.as_ref(),
+            signer: Some(crate::msi::SIGNER_SUBJECT),
+        };
         crate::msi::verify(&file, &expect)?;
         let logs = self.paths.logs();
         let _ = std::fs::create_dir_all(&logs);

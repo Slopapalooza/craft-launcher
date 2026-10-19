@@ -157,11 +157,14 @@ What the service will and won't do, since it runs as LocalSystem:
 - It downloads only from the apps' own `storytold/<app>` GitHub releases (as the launcher does), into
   a folder in the system's own profile that users can't write to. Before running a package it checks
   the release's published SHA-256, that Windows finds the package's Authenticode signature valid and
-  made by Learning Machines Inc (the Craft Apps' publisher), and that the package is that app at
-  that version.
-- The launcher and the command line reach it over a loopback connection (port 47414). Requests name
-  apps by id, nothing else: never a path, a download link or a version. The most another program on
-  the computer can do through it is start a check or a pending update sooner, or postpone one.
+  made by Learning Machines Inc (the Craft Apps' publisher: the certificate's whole subject,
+  `CN=Learning Machines Inc, O=Learning Machines Inc, L=Atlanta, S=Georgia, C=US`, not just the
+  name), and that the package is that app at that version.
+- The launcher and the command line reach it over a loopback connection (port 47414), and believe
+  only the service's own process there (as Windows reports which process holds each end), not
+  another program that took the port while the service was stopped. Requests name apps by id,
+  nothing else: never a path, a download link or a version. The most another program on the
+  computer can do through it is start a check or a pending update sooner, or postpone one.
 
 Settings live in `HKLM\SOFTWARE\Learning Machines LLC\ArtCraft Launcher Updater`. Give them to the
 installer (`msiexec /i artcraft-launcher-updater-<ver>-windows-x64.msi AUTOUPDATE=1`, kept by later

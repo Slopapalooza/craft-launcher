@@ -74,11 +74,13 @@ settings file must produce an error the user can act on, never a panic. Shared s
   (`apps/artcraft-launcher-updater`), which an administrator installs to do exactly that, and
   which must stay this narrow: it only *updates* Craft Apps an administrator already installed for
   all users (Windows Installer, HKLM), only to a newer release, and only with a package that passes
-  `msi::check` (valid Authenticode signature from `msi::SIGNER`, the app's own `ProductName` and
-  `Manufacturer`, the release's version) on top of the SHA-256. It downloads into its own folder in
-  the system profile (`Paths::for_service`), never a shared one such as `C:\ProgramData`. Its
-  requests (`native::service`) carry app ids only: never a path, a URL or a version. Installing a
-  new app always goes through the launcher and the UAC prompt.
+  `msi::check` (valid Authenticode signature whose certificate subject is exactly
+  `msi::SIGNER_SUBJECT`, the app's own `ProductName` and `Manufacturer`, the release's version) on
+  top of the SHA-256. It downloads into its own folder in the system profile
+  (`Paths::for_service`), never a shared one such as `C:\ProgramData`. Its requests
+  (`native::service`) carry app ids only: never a path, a URL or a version, and clients believe
+  only the service's own process on its port. Installing a new app always goes through the
+  launcher and the UAC prompt.
 - Never delete a user's files outside what the launcher itself installed.
 - **Agents never land or approve a third-party app.** A change that adds a catalog row, download
   source or install path for an app whose repo is not under `storytold/`, or that loosens the

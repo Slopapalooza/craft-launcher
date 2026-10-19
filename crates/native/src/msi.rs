@@ -5,8 +5,9 @@
 //! with no prompt, so it checks for itself first, as the macOS install checks the bundle's
 //! Developer ID team and version (`install::macos::Expect`):
 //!
-//! - the package's Authenticode signature is valid and was made by the Craft Apps' publisher
-//!   ([`SIGNER`]), as Windows itself judges it (`Get-AuthenticodeSignature`);
+//! - the package's Authenticode signature is valid and was made by the Craft Apps' publisher, as
+//!   Windows itself judges it (`Get-AuthenticodeSignature`): the certificate's whole subject
+//!   ([`SIGNER_SUBJECT`]) must match, not only its name, which a company elsewhere could share;
 //! - the package is the app's own (its `ProductName` is one of the app's names, its
 //!   `Manufacturer` is [`MANUFACTURER`]);
 //! - it is the version the release promises (`ProductVersion`, which MSI keeps numeric).
@@ -18,9 +19,13 @@ use std::path::Path;
 use artcraft_launcher_core::version::{self, Version};
 use serde::Deserialize;
 
-/// The subject of the certificate every Craft App's and ArtCraft Launcher's Windows packages are
-/// signed with (Azure Trusted Signing).
+/// The name on the certificate every Craft App's and ArtCraft Launcher's Windows packages are
+/// signed with (Azure Trusted Signing), for messages.
 pub const SIGNER: &str = "Learning Machines Inc";
+/// That certificate's whole subject, as Windows writes it, which a package's signer must match.
+/// The certificate itself is renewed every few days and its issuing CA changes from time to time;
+/// the subject is the publisher's verified identity and stays.
+pub const SIGNER_SUBJECT: &str = "CN=Learning Machines Inc, O=Learning Machines Inc, L=Atlanta, S=Georgia, C=US";
 /// The `Manufacturer` of those packages (also the `Publisher` of their uninstall entries).
 pub const MANUFACTURER: &str = "Learning Machines LLC";
 
@@ -30,8 +35,10 @@ pub const MANUFACTURER: &str = "Learning Machines LLC";
 pub struct Facts {
     /// Windows' verdict on the signature: `Valid`, `NotSigned`, `HashMismatch`, `NotTrusted`, ….
     pub status: String,
-    /// The signing certificate's subject name, when there is a signature.
+    /// The signing certificate's name, when there is a signature.
     pub signer: Option<String>,
+    /// The signing certificate's whole subject (`CN=…, O=…, L=…, S=…, C=…`).
+    pub subject: Option<String>,
     pub product_name: Option<String>,
     pub manufacturer: Option<String>,
     pub product_version: Option<String>,
@@ -44,20 +51,26 @@ pub struct Expect<'a> {
     pub names: Vec<&'a str>,
     /// The version it must be; `None` when the release's tag isn't a version.
     pub version: Option<&'a Version>,
-    /// Whose signature it must carry; `None` only in tests.
+    /// The whole subject of the certificate it must be signed with ([`SIGNER_SUBJECT`]); `None`
+    /// only in tests.
     pub signer: Option<&'a str>,
 }
 
 /// Checks `facts` against `expect`; the error says what didn't match, for the log and the user.
 pub fn check(facts: &Facts, expect: &Expect<'_>) -> Result<(), String> {
-    if let Some(signer) = expect.signer {
+    if let Some(subject) = expect.signer {
         if facts.status != "Valid" {
             let status = if facts.status.is_empty() { "unknown" } else { facts.status.as_str() };
             return Err(format!("the installer's signature isn't valid ({status}), so it wasn't installed"));
         }
-        if facts.signer.as_deref() != Some(signer) {
-            let who = facts.signer.as_deref().unwrap_or("nobody known");
-            return Err(format!("the installer is signed by {who}, not {signer}, so it wasn't installed"));
+        if facts.subject.as_deref() != Some(subject) {
+            // The same name somewhere else: the whole subject shows where.
+            let who = match (facts.signer.as_deref(), facts.subject.as_deref()) {
+                (Some(SIGNER), Some(whole)) | (None, Some(whole)) => whole,
+                (Some(name), _) => name,
+                (None, None) => "nobody known",
+            };
+            return Err(format!("the installer is signed by {who}, not {SIGNER}, so it wasn't installed"));
         }
     }
     let name = facts.product_name.as_deref().unwrap_or_default();
@@ -112,8 +125,10 @@ $ErrorActionPreference = 'Stop'
 $path = $env:ARTCRAFT_LAUNCHER_MSI
 $sig = Get-AuthenticodeSignature -LiteralPath $path
 $signer = $null
+$subject = $null
 if ($sig.SignerCertificate) {
   $signer = $sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+  $subject = $sig.SignerCertificate.Subject
 }
 $props = @{}
 $installer = New-Object -ComObject WindowsInstaller.Installer
@@ -129,6 +144,7 @@ foreach ($name in 'ProductName', 'Manufacturer', 'ProductVersion') {
 [pscustomobject]@{
   status = "$($sig.Status)"
   signer = $signer
+  subject = $subject
   productName = $props['ProductName']
   manufacturer = $props['Manufacturer']
   productVersion = $props['ProductVersion']
@@ -179,6 +195,7 @@ mod tests {
         Facts {
             status: "Valid".into(),
             signer: Some(SIGNER.into()),
+            subject: Some(SIGNER_SUBJECT.into()),
             product_name: Some("PhotoCraft".into()),
             manufacturer: Some(MANUFACTURER.into()),
             product_version: Some("0.8.2".into()),
@@ -186,7 +203,7 @@ mod tests {
     }
 
     fn expect(version: &Version) -> Expect<'_> {
-        Expect { names: vec!["PhotoCraft"], version: Some(version), signer: Some(SIGNER) }
+        Expect { names: vec!["PhotoCraft"], version: Some(version), signer: Some(SIGNER_SUBJECT) }
     }
 
     #[test]
@@ -210,12 +227,29 @@ mod tests {
             let err = check(&facts, &expect(&v)).unwrap_err();
             assert!(err.contains("signature isn't valid"), "{status}: {err}");
         }
-        let facts = Facts { signer: Some("Someone Else Ltd".into()), ..photocraft_0_8_2() };
+        let facts = Facts { signer: Some("Someone Else Ltd".into()), subject: Some("CN=Someone Else Ltd".into()), ..photocraft_0_8_2() };
         assert!(check(&facts, &expect(&v)).unwrap_err().contains("signed by Someone Else Ltd"));
-        let facts = Facts { signer: None, ..photocraft_0_8_2() };
+        let facts = Facts { signer: None, subject: None, ..photocraft_0_8_2() };
         assert!(check(&facts, &expect(&v)).is_err());
         // Close isn't good enough.
-        let facts = Facts { signer: Some("Learning Machines Inc.".into()), ..photocraft_0_8_2() };
+        let close = "CN=Learning Machines Inc., O=Learning Machines Inc., L=Atlanta, S=Georgia, C=US";
+        let facts = Facts { signer: Some("Learning Machines Inc.".into()), subject: Some(close.into()), ..photocraft_0_8_2() };
+        assert!(check(&facts, &expect(&v)).is_err());
+    }
+
+    #[test]
+    fn the_same_name_somewhere_else_is_refused() {
+        let v = version::parse("0.8.2").unwrap();
+        let elsewhere = "CN=Learning Machines Inc, O=Learning Machines Inc, L=Springfield, S=Oregon, C=US";
+        let facts = Facts { subject: Some(elsewhere.into()), ..photocraft_0_8_2() };
+        let err = check(&facts, &expect(&v)).unwrap_err();
+        assert!(err.contains("L=Springfield, S=Oregon"), "{err}");
+        // A subject with more in it (a department, say) isn't the same certificate either.
+        let more = format!("CN=Learning Machines Inc, OU=Marketing, {}", SIGNER_SUBJECT.trim_start_matches("CN=Learning Machines Inc, "));
+        let facts = Facts { subject: Some(more), ..photocraft_0_8_2() };
+        assert!(check(&facts, &expect(&v)).is_err());
+        // Nor is the right name with no subject to go with it.
+        let facts = Facts { subject: None, ..photocraft_0_8_2() };
         assert!(check(&facts, &expect(&v)).is_err());
     }
 
@@ -236,12 +270,13 @@ mod tests {
 
     #[test]
     fn reads_what_powershell_printed() {
-        let out = "WARNING: something chatty\r\n{\"status\":\"Valid\",\"signer\":\"Learning Machines Inc\",\"productName\":\"PhotoCraft\",\
+        let out = "WARNING: something chatty\r\n{\"status\":\"Valid\",\"signer\":\"Learning Machines Inc\",\
+                   \"subject\":\"CN=Learning Machines Inc, O=Learning Machines Inc, L=Atlanta, S=Georgia, C=US\",\"productName\":\"PhotoCraft\",\
                    \"manufacturer\":\"Learning Machines LLC\",\"productVersion\":\"0.8.2\"}\r\n";
         assert_eq!(parse_facts(out).unwrap(), photocraft_0_8_2());
-        let unsigned =
-            r#"{"status":"NotSigned","signer":null,"productName":"PhotoCraft","manufacturer":"Learning Machines LLC","productVersion":"0.8.2"}"#;
-        assert_eq!(parse_facts(unsigned).unwrap().signer, None);
+        let unsigned = r#"{"status":"NotSigned","signer":null,"subject":null,"productName":"PhotoCraft","manufacturer":"Learning Machines LLC","productVersion":"0.8.2"}"#;
+        let unsigned = parse_facts(unsigned).unwrap();
+        assert_eq!((unsigned.signer, unsigned.subject), (None, None));
         assert!(parse_facts("Get-AuthenticodeSignature : Cannot find path").is_err());
         assert!(parse_facts("").is_err());
     }
@@ -279,6 +314,6 @@ mod tests {
         let want = version::parse(&std::env::var("CRAFT_MSI_VERSION").expect("set CRAFT_MSI_VERSION")).unwrap();
         let facts = inspect(Path::new(&msi)).unwrap();
         let names: Vec<&str> = artcraft_launcher_core::SUITE.iter().map(|a| a.name).collect();
-        assert_eq!(check(&facts, &Expect { names, version: Some(&want), signer: Some(SIGNER) }), Ok(()), "{facts:?}");
+        assert_eq!(check(&facts, &Expect { names, version: Some(&want), signer: Some(SIGNER_SUBJECT) }), Ok(()), "{facts:?}");
     }
 }

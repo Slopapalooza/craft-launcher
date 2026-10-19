@@ -330,10 +330,12 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// Connects to the update service on this machine, if it's listening.
+    /// Connects to the update service on this machine, if it's listening, and only to it.
     pub fn open() -> Result<Self, String> {
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, PORT));
         let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT).map_err(|e| format!("the update service isn't running ({e})"))?;
+        // What answers here says how updates went, so it must be the service itself.
+        check_peer(&stream)?;
         let _ = stream.set_nodelay(true);
         let reading = stream.try_clone().map_err(|e| e.to_string())?;
         Ok(Self { stream, lines: LineReader::new(reading), heard: Instant::now() })
@@ -367,6 +369,53 @@ impl Connection {
             }
         }
     }
+}
+
+/// Checks that the other end of `stream` belongs to the update service's own process, as Windows
+/// tells it: while the service isn't listening (stopped, or waiting to restart after a crash),
+/// any program could take its port and answer in its name.
+#[cfg(windows)]
+fn check_peer(stream: &TcpStream) -> Result<(), String> {
+    let service = service_process().ok_or("the update service isn't running")?;
+    let ours = stream.local_addr().map_err(|e| e.to_string())?;
+    let netstat = crate::install::windows::system32().join("NETSTAT.EXE");
+    let table = crate::process::run(&netstat.to_string_lossy(), &["-ano", "-p", "TCP"], Duration::from_secs(10))
+        .map_err(|e| format!("couldn't check what answers on the update service's port ({e})"))?;
+    match peer_process(&table, PORT, ours.port()) {
+        Some(pid) if pid == service => Ok(()),
+        Some(pid) => {
+            log::warn!("process {pid}, not the {DISPLAY_NAME} (process {service}), answers on its port");
+            Err("something other than the update service answers on its port".into())
+        }
+        None => Err("couldn't tell what answers on the update service's port".into()),
+    }
+}
+
+#[cfg(not(windows))]
+fn check_peer(_stream: &TcpStream) -> Result<(), String> {
+    Err("the update service runs on Windows only".into())
+}
+
+/// The update service's process, while Windows has it running.
+#[cfg(windows)]
+fn service_process() -> Option<u32> {
+    use windows_service::service::ServiceAccess;
+    use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT).ok()?;
+    let service = manager.open_service(SERVICE_NAME, ServiceAccess::QUERY_STATUS).ok()?;
+    service.query_status().ok()?.process_id.filter(|pid| *pid != 0)
+}
+
+/// The process `netstat -ano -p TCP` says holds the service's end of the connection from
+/// `client_port`. Only the address columns and the process ID are read: the state is in the
+/// system's language.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn peer_process(netstat: &str, port: u16, client_port: u16) -> Option<u32> {
+    let (local, remote) = (format!("127.0.0.1:{port}"), format!("127.0.0.1:{client_port}"));
+    netstat.lines().find_map(|line| match line.split_whitespace().collect::<Vec<_>>().as_slice() {
+        ["TCP", l, r, _, pid] if *l == local && *r == remote => pid.parse().ok(),
+        _ => None,
+    })
 }
 
 /// Whether the update service is listening on this machine.
@@ -664,6 +713,33 @@ mod tests {
         // The launcher wants something newer than the service sees (a pre-release): its own way.
         assert!(matches!(done(Outcome::UpToDate { version: Some("0.8.1".into()) }), Delegated::Declined(_)));
         assert!(matches!(done(Outcome::UpToDate { version: None }), Delegated::Declined(_)));
+    }
+
+    #[test]
+    fn finds_the_process_on_the_services_end_of_a_connection() {
+        let table = "\r\nActive Connections\r\n\r\n  Proto  Local Address          Foreign Address        State           PID\r\n\
+                     \x20 TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1180\r\n\
+                     \x20 TCP    127.0.0.1:47414        0.0.0.0:0              LISTENING       4321\r\n\
+                     \x20 TCP    127.0.0.1:53110        127.0.0.1:47414        ESTABLISHED     9876\r\n\
+                     \x20 TCP    127.0.0.1:47414        127.0.0.1:53110        ESTABLISHED     4321\r\n\
+                     \x20 TCP    127.0.0.1:47414        127.0.0.1:60001        HERGESTELLT     5555\r\n";
+        assert_eq!(peer_process(table, PORT, 53110), Some(4321));
+        // The state is in the system's language: only the addresses count.
+        assert_eq!(peer_process(table, PORT, 60001), Some(5555));
+        // Our own end, the listener and other connections are never taken for it.
+        assert_eq!(peer_process(table, PORT, 47414), None);
+        assert_eq!(peer_process(table, PORT, 1), None);
+        assert_eq!(peer_process("", PORT, 53110), None);
+    }
+
+    /// Against the service installed on this computer, when there is one: what answers is it.
+    #[cfg(windows)]
+    #[test]
+    fn the_installed_service_is_recognised() {
+        if service_process().is_none() {
+            return;
+        }
+        assert!(Connection::open().is_ok());
     }
 
     #[test]
