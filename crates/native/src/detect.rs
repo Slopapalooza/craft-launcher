@@ -208,6 +208,9 @@ pub mod windows {
         pub product_code: String,
         pub version: Option<artcraft_launcher_core::version::Version>,
         pub exe: Option<PathBuf>,
+        /// The folder the package itself registered (`InstallLocation`, else the folder the app's
+        /// MSI remembers), when it registered one.
+        pub folder: Option<PathBuf>,
         /// Installed for every user (registered under HKLM), not just the current one.
         pub machine: bool,
     }
@@ -227,8 +230,9 @@ pub mod windows {
                 }
                 let version = key.get_value::<String, _>("DisplayVersion").ok().and_then(|v| version::parse(&v));
                 let location: String = key.get_value("InstallLocation").unwrap_or_default();
-                let exe = exe_path(app, (!location.is_empty()).then(|| PathBuf::from(location)).or_else(|| install_dir(app)));
-                out.push(MsiInstall { product_code: code, version, exe, machine });
+                let folder = (!location.is_empty()).then(|| PathBuf::from(location)).or_else(|| install_dir(app));
+                let exe = exe_path(app, folder.clone());
+                out.push(MsiInstall { product_code: code, version, exe, folder, machine });
             }
         }
         out.sort_by(|a, b| match (&b.version, &a.version) {
@@ -281,6 +285,13 @@ pub mod windows {
     /// service (LocalSystem) may replace. A copy only one user installed is theirs to update.
     pub fn machine_install(app: &CraftApp) -> Option<Installed> {
         msi_installs(app).into_iter().find(|m| m.machine).map(|m| installed(app, m))
+    }
+
+    /// The folder [`machine_install`]'s package registered, where its update goes. Not the
+    /// exe's folder: `App Paths` may name another copy, and the exe may sit in a subfolder.
+    /// `None` when it registered none, and its update goes where the package puts it by default.
+    pub fn machine_install_folder(app: &CraftApp) -> Option<PathBuf> {
+        msi_installs(app).into_iter().find(|m| m.machine).and_then(|m| m.folder)
     }
 
     fn installed(app: &CraftApp, m: MsiInstall) -> Installed {

@@ -268,7 +268,7 @@ impl Engine {
             release.version_label()
         );
         let result = match self.scope {
-            Scope::Machine => self.apply_machine(app, inst, release, asset, stop, phase),
+            Scope::Machine => self.apply_machine(app, release, asset, stop, phase),
             Scope::User => self.apply_user(app, inst, release, asset, kind, stop, phase),
         };
         match result {
@@ -292,18 +292,10 @@ impl Engine {
     }
 
     /// The update service's install: download and check, then run the package quietly into the
-    /// folder `inst` (what's registered for all users) is in. `Ok(true)` when Windows wants a
-    /// restart to finish.
+    /// folder the copy installed for all users registered. `Ok(true)` when Windows wants a restart
+    /// to finish.
     #[cfg(windows)]
-    fn apply_machine(
-        &self,
-        app: &CraftApp,
-        inst: &Installed,
-        release: &Release,
-        asset: &Asset,
-        stop: &Stop,
-        phase: &mut dyn FnMut(JobPhase),
-    ) -> Result<bool, String> {
+    fn apply_machine(&self, app: &CraftApp, release: &Release, asset: &Asset, stop: &Stop, phase: &mut dyn FnMut(JobPhase)) -> Result<bool, String> {
         let file = install::download(release, asset, &mut self.job(stop, phase))?;
         let names: Vec<&str> = app.names().collect();
         let expect = crate::msi::Expect { names, version: release.version.as_ref(), signer: Some(crate::msi::SIGNER_SUBJECT) };
@@ -315,9 +307,10 @@ impl Engine {
         phase(JobPhase::Installing);
         let logs = self.paths.logs();
         let _ = std::fs::create_dir_all(&logs);
-        // Into the folder the installed copy is in, as the launcher's own updates do: an app put in
-        // a chosen folder stays there. It comes from what's registered here, never from a request.
-        let folder = install::msi_update_folder(inst);
+        // Into the folder the installed package registered, so an app put in a chosen folder stays
+        // there (none registered: where the package goes by default). It comes from what's
+        // registered here, never from a request.
+        let folder = crate::detect::windows::machine_install_folder(app);
         let restart = install::windows::run_msi_quiet(&file, folder.as_deref(), &logs.join(format!("msi-{}.log", app.id)), stop, phase)?;
         let _ = std::fs::remove_file(&file);
         // What's registered now is the truth.
@@ -337,7 +330,6 @@ impl Engine {
     fn apply_machine(
         &self,
         _app: &CraftApp,
-        _inst: &Installed,
         _release: &Release,
         _asset: &Asset,
         _stop: &Stop,

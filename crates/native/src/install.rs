@@ -201,7 +201,8 @@ fn destination(
 }
 
 /// The folder an MSI update of `existing` goes in: the one its copy is in, so an app installed into
-/// a chosen folder stays there. The launcher's updates and the update service's both use it.
+/// a chosen folder stays there. (The update service goes by the folder the package registered,
+/// `detect::windows::machine_install_folder`.)
 pub fn msi_update_folder(existing: &Installed) -> Option<PathBuf> {
     let exe = Path::new(&existing.location);
     exe.parent().filter(|_| exe.is_absolute()).map(Path::to_path_buf)

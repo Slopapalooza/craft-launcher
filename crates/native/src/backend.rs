@@ -599,7 +599,13 @@ fn run_install(
 /// it's not one for the service (a new install, no service, an install for one user): the launcher
 /// installs it itself, as before.
 fn via_service(service: bool, app: &CraftApp, shared: &Shared, existing: Option<&Installed>, stop: &Stop) -> Option<Result<String, String>> {
-    if !service || existing.is_none_or(|i| i.source != InstallSource::Msi) {
+    let inst = existing.filter(|i| service && i.source == InstallSource::Msi)?;
+    #[cfg(windows)]
+    let machine = crate::detect::windows::machine_install(app);
+    #[cfg(not(windows))]
+    let machine: Option<Installed> = None;
+    if !is_machine_copy(inst, machine.as_ref()) {
+        log::info!("{}: the copy found is this user's own, not the one for all users; installing it here", app.name);
         return None;
     }
     let latest = shared.latest.lock().unwrap_or_else(PoisonError::into_inner).get(app.id).and_then(|r| r.version.clone());
@@ -618,6 +624,13 @@ fn via_service(service: bool, app: &CraftApp, shared: &Shared, existing: Option<
             None
         }
     }
+}
+
+/// Whether `found` is `machine`, the copy installed for all users: the only one the service
+/// updates. When this user's own copy is the one found (newer than that one, say), the service
+/// would update the other and leave this one as it was.
+fn is_machine_copy(found: &Installed, machine: Option<&Installed>) -> bool {
+    machine.is_some_and(|m| m.package == found.package && m.location == found.location)
 }
 
 /// What a finished install tells the user.
@@ -1467,6 +1480,26 @@ mod tests {
         backend.send(Command::Cancel { app: APP.to_string() });
         assert!(!dest.exists());
         assert_eq!(last_ready(backend.poll()), Some(false));
+    }
+
+    #[test]
+    fn only_the_copy_for_all_users_goes_to_the_update_service() {
+        let msi = |code: &str, location: &str| Installed {
+            version: version::parse("0.8.1"),
+            source: InstallSource::Msi,
+            location: location.into(),
+            package: Some(code.into()),
+        };
+        let machine = msi("{MACHINE}", r"C:\Program Files\PhotoCraft\photocraft.exe");
+        assert!(is_machine_copy(&machine.clone(), Some(&machine)));
+        // This user's own copy found instead (newer, so another product code), or the same
+        // package installed for this user alone (somewhere else): not the service's.
+        let users = msi("{USERS}", r"C:\Users\me\AppData\Local\Programs\PhotoCraft\photocraft.exe");
+        assert!(!is_machine_copy(&users, Some(&machine)));
+        let same_package = msi("{MACHINE}", r"C:\Users\me\AppData\Local\Programs\PhotoCraft\photocraft.exe");
+        assert!(!is_machine_copy(&same_package, Some(&machine)));
+        // Nothing installed for all users.
+        assert!(!is_machine_copy(&users, None));
     }
 
     #[test]
