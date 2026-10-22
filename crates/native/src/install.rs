@@ -1446,8 +1446,16 @@ mod freebsd {
 fn msi_command(program: &Path, msi: &Path) -> Result<std::process::Command, String> {
     let msi = msi_path(msi)?;
     let mut command = process::command(program);
-    command.arg("/i").arg(msi).args(["/passive", "/norestart"]);
+    // A verbose log beside the package: Windows Installer's own errors (1603 above all) say
+    // nothing without it.
+    command.arg("/i").arg(&msi).args(["/passive", "/norestart", "/l*v"]).arg(msi_log(&msi));
     Ok(command)
+}
+
+/// Where `msi_command` asks Windows Installer to write its log.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn msi_log(msi: &Path) -> PathBuf {
+    msi.with_extension("log")
 }
 
 /// Windows Installer's storage APIs can fail on paths through junctions or symlinks (#338).
@@ -1493,20 +1501,23 @@ pub mod windows {
 
     /// Runs an MSI with no UI at all and no restart, for the update service (LocalSystem, which
     /// needs no permission and has nobody to show a window to), into `destination` when given, as
-    /// [`run_msi`] does. Errors and progress notes go to `log`. `Ok(true)` when Windows wants a
-    /// restart to finish replacing files in use.
+    /// [`run_msi`] does. Windows Installer's verbose log goes to `log`, which a failure names.
+    /// `Ok(true)` when Windows wants a restart to finish replacing files in use.
     pub fn run_msi_quiet(msi: &Path, destination: Option<&Path>, log: &Path, stop: &Stop, phase: &mut dyn FnMut(JobPhase)) -> Result<bool, String> {
         let mut restart = false;
         in_turn(stop, phase, JobPhase::Installing, || {
             use std::os::windows::process::CommandExt;
             let mut command = process::command(msiexec());
-            command.arg("/i").arg(msi_path(msi)?).args(["/qn", "/norestart", "/l*"]).arg(log);
+            command.arg("/i").arg(msi_path(msi)?).args(["/qn", "/norestart", "/l*v"]).arg(log);
             if let Some(dir) = destination {
                 command.raw_arg(msi_folder_argument(dir)?);
             }
             let status = command.status().map_err(|e| format!("couldn't start the Windows Installer ({e})"))?;
             restart = matches!(status.code(), Some(3010 | 1641));
-            explain(status.code())
+            explain(status.code()).map_err(|e| match status.code() {
+                Some(1602) | None => e,
+                _ => format!("{e}. Its log is at {}", log.display()),
+            })
         })?;
         Ok(restart)
     }
@@ -1515,7 +1526,7 @@ pub mod windows {
     /// own package, which stops the service (this process) to replace it and starts the new one.
     pub fn start_msi_quiet(msi: &Path, log: &Path) -> Result<(), String> {
         let mut cmd = process::command(msiexec());
-        cmd.arg("/i").arg(msi_path(msi)?).args(["/qn", "/norestart", "/l*"]).arg(log);
+        cmd.arg("/i").arg(msi_path(msi)?).args(["/qn", "/norestart", "/l*v"]).arg(log);
         process::spawn_detached(cmd).map_err(|e| format!("couldn't start the Windows Installer ({e})"))
     }
 
@@ -1528,7 +1539,10 @@ pub mod windows {
                 command.raw_arg(msi_folder_argument(dir)?);
             }
             let status = command.status().map_err(|e| format!("couldn't start the Windows Installer ({e})"))?;
-            explain(status.code())
+            explain(status.code()).map_err(|e| match status.code() {
+                Some(1602) | None => e,
+                _ => format!("{e}. Its log is at {}", msi_log(msi).display()),
+            })
         })
     }
 
@@ -1578,7 +1592,9 @@ mod tests {
                 std::ffi::OsStr::new("/i"),
                 file.canonicalize().unwrap().as_os_str(),
                 std::ffi::OsStr::new("/passive"),
-                std::ffi::OsStr::new("/norestart")
+                std::ffi::OsStr::new("/norestart"),
+                std::ffi::OsStr::new("/l*v"),
+                file.canonicalize().unwrap().with_extension("log").as_os_str()
             ]
         );
     }

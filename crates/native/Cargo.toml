@@ -44,3 +44,5 @@ dunce = "1"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 # The update service's process ID, to tell it from anything else on its port (service.rs).
 windows-service = "0.8"
+# Safe wrappers for the Win32 calls that have no std equivalent (reading a file's VERSIONINFO).
+winsafe = { version = "0.0.29", features = ["version"] }
