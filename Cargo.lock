@@ -302,6 +302,7 @@ dependencies = [
 name = "artcraft-launcher-core"
 version = "0.6.1"
 dependencies = [
+ "jiff",
  "semver",
  "serde",
  "serde_json",
@@ -324,6 +325,7 @@ dependencies = [
  "tar",
  "tempfile",
  "ureq",
+ "verifysign",
  "windows-service",
  "winreg",
  "winsafe",
@@ -5007,6 +5009,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "verifysign"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6acfcc42a8d44f340d001193d97ef56bf33210b51ad760ae8308c97d5241ca51"
+dependencies = [
+ "core-foundation 0.10.1",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "version-compare"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5915,6 +5927,9 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 [[package]]
 name = "xtask"
 version = "0.6.1"
+dependencies = [
+ "jiff",
+]
 
 [[package]]
 name = "yoke"
