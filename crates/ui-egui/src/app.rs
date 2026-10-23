@@ -389,13 +389,7 @@ impl LauncherUi {
     fn handle(&mut self, ctx: &egui::Context, event: Event) -> bool {
         match event {
             Event::Latest { app, latest, from } => {
-                if let Some(e) = self.entry_mut(&app) {
-                    // A failed check keeps the release we already know about (and where it came from).
-                    if !(matches!(latest, LatestRelease::Failed(_)) && matches!(e.latest, Some(LatestRelease::Found(_)))) {
-                        e.latest = Some(latest);
-                        e.origin = Some(from);
-                    }
-                }
+                self.on_latest(app, latest, from);
                 true
             }
             Event::Screenshot { app, key, result } => {
@@ -410,14 +404,7 @@ impl LauncherUi {
                 true
             }
             Event::Progress { app, phase } => {
-                if app == artcraft_launcher_core::catalog::LAUNCHER_ID {
-                    self.launcher_job = Some(phase);
-                    if matches!(self.dialog, Some(Dialog::LauncherUpdate(_))) {
-                        self.dialog = None;
-                    }
-                } else if let Some(e) = self.entry_mut(&app) {
-                    e.job = Some(phase);
-                }
+                self.on_progress(app, phase);
                 false
             }
             Event::LauncherRestarting => {
@@ -446,59 +433,11 @@ impl LauncherUi {
                 false
             }
             Event::JobFinished { app, result } => {
-                let launcher = app == artcraft_launcher_core::catalog::LAUNCHER_ID;
-                // What the job was doing when it ended says what a cancellation called off.
-                let last = if launcher { self.launcher_job.take() } else { self.entry(&app).and_then(|e| e.job) };
-                if let Some(e) = self.entry_mut(&app) {
-                    e.job = None;
-                }
-                let kept = self.entry(&app).is_some_and(|e| e.ready);
-                match result {
-                    Ok(msg) => self.toast(ctx, msg, false),
-                    // The paused card says it all.
-                    Err(e) if e == PAUSED => {}
-                    Err(e) if e == CANCELLED && launcher => self.toast(ctx, tl!("Update cancelled"), false),
-                    // An install's own cancellations end as INSTALL_CANCELLED, so past the
-                    // download this is a removal called off while it waited for the installer.
-                    Err(e) if e == CANCELLED && matches!(last, Some(JobPhase::Waiting | JobPhase::Removing)) => {
-                        self.toast(ctx, tl!("Uninstall cancelled"), false);
-                    }
-                    Err(e) if e == CANCELLED => self.toast(ctx, tl!("Download cancelled"), false),
-                    Err(e) if e == INSTALL_CANCELLED && kept => {
-                        self.toast(ctx, tl!("Install cancelled. The download is kept for the next try."), false);
-                    }
-                    Err(e) if e == INSTALL_CANCELLED => self.toast(ctx, tl!("Install cancelled"), false),
-                    // The Replace dialog says it all.
-                    Err(_) if matches!(&self.dialog, Some(Dialog::Replace { app: a, .. }) if *a == app) => {}
-                    Err(e) => self.toast(ctx, e, true),
-                }
+                self.on_job_finished(ctx, app, result);
                 true
             }
-            Event::LauncherUpdate(r) => {
-                // Whether the launcher can replace itself is only known once an update is found.
-                self.caps = self.backend.capabilities();
-                let fresh = self.launcher_update.as_ref().is_none_or(|cur| cur.version != r.version);
-                self.launcher_update = Some(r.clone());
-                // Ask once per new version, unless automatic updates will install it anyway.
-                let automatic = self.settings.auto_update && self.caps.self_update;
-                if fresh && !automatic && self.dialog.is_none() && self.launcher_job.is_none() {
-                    self.dialog = Some(Dialog::LauncherUpdate(r));
-                }
-                fresh
-            }
-            Event::MachineAutoUpdate { setting, error } => {
-                self.machine_auto_update_pending = false;
-                self.machine_auto_update = setting;
-                // With a service, the box shows the computer's setting (what an administrator chose).
-                if let Some(machine) = setting {
-                    self.settings.auto_update = machine.on;
-                }
-                if let Some(e) = error {
-                    self.toast(ctx, e, true);
-                }
-                // Turned on: whatever is waiting installs now.
-                setting.is_some_and(|m| m.on)
-            }
+            Event::LauncherUpdate(r) => self.on_launcher_update(r),
+            Event::MachineAutoUpdate { setting, error } => self.on_machine_auto_update(ctx, setting, error),
             Event::CheckStarted => {
                 self.checking = true;
                 false
@@ -511,6 +450,85 @@ impl LauncherUi {
                 true
             }
         }
+    }
+
+    // A failed check keeps the release we already know about (and where it came from).
+    fn on_latest(&mut self, app: String, latest: LatestRelease, from: artcraft_launcher_core::protocol::Origin) {
+        if let Some(e) = self.entry_mut(&app)
+            && !(matches!(latest, LatestRelease::Failed(_)) && matches!(e.latest, Some(LatestRelease::Found(_))))
+        {
+            e.latest = Some(latest);
+            e.origin = Some(from);
+        }
+    }
+
+    // Routes a job phase to the launcher's own slot or to the app card it belongs to.
+    fn on_progress(&mut self, app: String, phase: JobPhase) {
+        if app == artcraft_launcher_core::catalog::LAUNCHER_ID {
+            self.launcher_job = Some(phase);
+            if matches!(self.dialog, Some(Dialog::LauncherUpdate(_))) {
+                self.dialog = None;
+            }
+        } else if let Some(e) = self.entry_mut(&app) {
+            e.job = Some(phase);
+        }
+    }
+
+    /// Summarizes a job's end as a toast; cancellations have their own messages.
+    fn on_job_finished(&mut self, ctx: &egui::Context, app: String, result: Result<String, String>) {
+        let launcher = app == artcraft_launcher_core::catalog::LAUNCHER_ID;
+        // What the job was doing when it ended says what a cancellation called off.
+        let last = if launcher { self.launcher_job.take() } else { self.entry(&app).and_then(|e| e.job) };
+        if let Some(e) = self.entry_mut(&app) {
+            e.job = None;
+        }
+        let kept = self.entry(&app).is_some_and(|e| e.ready);
+        match result {
+            Ok(msg) => self.toast(ctx, msg, false),
+            // The paused card says it all.
+            Err(e) if e == PAUSED => {}
+            Err(e) if e == CANCELLED && launcher => self.toast(ctx, tl!("Update cancelled"), false),
+            // An install's own cancellations end as INSTALL_CANCELLED, so past the
+            // download this is a removal called off while it waited for the installer.
+            Err(e) if e == CANCELLED && matches!(last, Some(JobPhase::Waiting | JobPhase::Removing)) => {
+                self.toast(ctx, tl!("Uninstall cancelled"), false);
+            }
+            Err(e) if e == CANCELLED => self.toast(ctx, tl!("Download cancelled"), false),
+            Err(e) if e == INSTALL_CANCELLED && kept => {
+                self.toast(ctx, tl!("Install cancelled. The download is kept for the next try."), false);
+            }
+            Err(e) if e == INSTALL_CANCELLED => self.toast(ctx, tl!("Install cancelled"), false),
+            // The Replace dialog says it all.
+            Err(_) if matches!(&self.dialog, Some(Dialog::Replace { app: a, .. }) if *a == app) => {}
+            Err(e) => self.toast(ctx, e, true),
+        }
+    }
+
+    /// Offers the launcher's own update once per new version, unless automatic updates install it.
+    fn on_launcher_update(&mut self, r: Release) -> bool {
+        // Whether the launcher can replace itself is only known once an update is found.
+        self.caps = self.backend.capabilities();
+        let fresh = self.launcher_update.as_ref().is_none_or(|cur| cur.version != r.version);
+        self.launcher_update = Some(r.clone());
+        let automatic = self.settings.auto_update && self.caps.self_update;
+        if fresh && !automatic && self.dialog.is_none() && self.launcher_job.is_none() {
+            self.dialog = Some(Dialog::LauncherUpdate(r));
+        }
+        fresh
+    }
+
+    /// The computer's background-install setting (with the update service), as it now stands:
+    /// the box shows what an administrator chose. `true` when it's on, so whatever waits installs.
+    fn on_machine_auto_update(&mut self, ctx: &egui::Context, setting: Option<MachineAutoUpdate>, error: Option<String>) -> bool {
+        self.machine_auto_update_pending = false;
+        self.machine_auto_update = setting;
+        if let Some(machine) = setting {
+            self.settings.auto_update = machine.on;
+        }
+        if let Some(e) = error {
+            self.toast(ctx, e, true);
+        }
+        setting.is_some_and(|m| m.on)
     }
 
     /// One notification per new version of an installed app.
