@@ -13,17 +13,24 @@ pub mod detect;
 pub mod feed_throttle;
 pub mod http;
 pub mod install;
+pub mod logging;
 pub mod login;
 pub mod manifest;
+pub mod msi;
 pub mod packages;
 pub mod paths;
+pub mod policy;
+#[cfg(windows)]
+pub mod portable;
 pub mod process;
 pub mod proxy;
 pub mod queue;
 pub mod screenshots;
 pub mod self_update;
+pub mod service;
 pub mod single_instance;
 pub mod source;
+pub mod updater;
 
 pub use backend::NativeBackend;
 
