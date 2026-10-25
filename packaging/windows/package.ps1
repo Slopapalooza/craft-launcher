@@ -97,6 +97,8 @@ foreach ($check in @(@($Exe, 2, 'Windows GUI'), @($UpdaterExe, 3, 'console'))) {
 $Stage = Join-Path $TargetDir "windows-package\$Arch"
 Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+# Dependency font notices are required even without optional craft-fonts.
+Copy-Item -LiteralPath (Join-Path $Root 'NOTICE') -Destination $Stage
 Copy-Item (Join-Path $Bin $Exe) $Stage
 Copy-Item (Join-Path $Bin $UpdaterExe) $Stage
 
