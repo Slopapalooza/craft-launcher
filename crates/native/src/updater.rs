@@ -296,6 +296,8 @@ impl Engine {
     /// to finish.
     #[cfg(windows)]
     fn apply_machine(&self, app: &CraftApp, release: &Release, asset: &Asset, stop: &Stop, phase: &mut dyn FnMut(JobPhase)) -> Result<bool, String> {
+        // The file is the release's own (its name and tag say the release's version), before a byte comes.
+        install::bind_artifact_version(app, release, asset)?;
         let file = install::download(release, asset, &mut self.job(stop, phase))?;
         let names: Vec<&str> = app.names().collect();
         let expect = crate::msi::Expect { names, version: release.version.as_ref(), signer: Some(crate::msi::SIGNER_SUBJECT) };
@@ -384,6 +386,8 @@ impl Engine {
     /// new one.
     #[cfg(windows)]
     pub fn start_own_update(&self, launcher: &Release, asset: &Asset, stop: &Stop) -> Result<(), String> {
+        // In ArtCraft Launcher's release: its tag and the file's name in the link must be the release's.
+        install::bind_artifact_version(&LAUNCHER, launcher, asset)?;
         let file = install::download(launcher, asset, &mut self.job(stop, &mut |_| {}))?;
         let expect = crate::msi::Expect {
             names: vec![crate::service::DISPLAY_NAME],
@@ -616,5 +620,26 @@ mod tests {
         assert_eq!(engine.own_update(&launcher(&newer, false)), None);
         // Never the same or an older version.
         assert_eq!(engine.own_update(&launcher(&ours, true)), None);
+    }
+
+    #[test]
+    fn the_services_own_package_is_bound_to_its_release() {
+        let v = Version::new(0, 7, 0);
+        let name = format!("{UPDATER_ID}-{v}-windows-x64.msi");
+        let at = |tag: &str, file: &str| format!("https://github.com/storytold/craft-launcher/releases/download/{tag}/{file}");
+        let release = |url: String| Release {
+            tag: format!("v{v}"),
+            version: Some(v.clone()),
+            assets: vec![Asset { name: name.clone(), size: 1, url, sha256: None }],
+            ..Release::default()
+        };
+        // Read with the launcher's name, the service's file name carries no version of its own: the
+        // link's tag and file name are what's checked (and msi::check reads the package's version).
+        let good = release(at("v0.7.0", &name));
+        assert_eq!(install::bind_artifact_version(&LAUNCHER, &good, &good.assets[0]), Ok(()));
+        for wrong in [at("v0.6.1", &name), at("v0.7.0", &format!("{UPDATER_ID}-0.6.1-windows-x64.msi"))] {
+            let r = release(wrong);
+            assert!(install::bind_artifact_version(&LAUNCHER, &r, &r.assets[0]).is_err(), "{}", r.assets[0].url);
+        }
     }
 }
