@@ -17,6 +17,8 @@ pub mod logging;
 pub mod login;
 pub mod manifest;
 pub mod msi;
+#[cfg(any(windows, test))]
+mod msi_context;
 pub mod packages;
 pub mod paths;
 pub mod policy;
