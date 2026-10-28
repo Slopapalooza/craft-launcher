@@ -77,6 +77,8 @@ pub fn install_at(
     let _ = commit;
     #[allow(unused_variables)]
     let destination = destination(app, kind, existing, previous, job.install_locations)?;
+    #[cfg(windows)]
+    let destination = msi_update_folder(app, kind, existing, destination);
     if let Some(inst) = existing
         && inst.source.launcher_can_update()
         && process::is_running(Path::new(&inst.location))
@@ -233,6 +235,25 @@ pub fn occupied(
     Ok(target.filter(|t| std::fs::symlink_metadata(t).is_ok()))
 }
 
+/// An MSI update keeps the folder of the copy it replaces only when that copy was found in the
+/// record's own scope. A path found by the launch-only fallback, in another scope, is never passed
+/// to the installer: the update then keeps the record's context and the package's own folder.
+#[cfg(windows)]
+fn msi_update_folder(app: &CraftApp, kind: PackageKind, existing: Option<&Installed>, destination: Option<PathBuf>) -> Option<PathBuf> {
+    match existing {
+        Some(inst) if kind == PackageKind::Msi && inst.source == InstallSource::Msi => {
+            let in_scope = inst.package.as_deref().is_some_and(|code| crate::detect::windows::location_is_in_record_scope(app, code, &inst.location));
+            keep_if_in_scope(destination, in_scope)
+        }
+        _ => destination,
+    }
+}
+
+#[cfg(windows)]
+fn keep_if_in_scope(destination: Option<PathBuf>, in_scope: bool) -> Option<PathBuf> {
+    destination.filter(|_| in_scope)
+}
+
 /// The folder a new copy goes in: beside the launcher's copy it replaces, else the user's choice,
 /// else the platform default (`None`). macOS updates find their bundle's folder themselves.
 fn destination(
@@ -248,7 +269,7 @@ fn destination(
     if let Some(inst) = existing {
         return Ok(match kind {
             PackageKind::AppImage => previous.filter(|r| r.kind == kind).and_then(|r| r.path.parent()).map(Path::to_path_buf),
-            PackageKind::Msi => msi_update_folder(inst),
+            PackageKind::Msi => msi_copy_folder(inst),
             _ => None,
         });
     }
@@ -261,9 +282,10 @@ fn destination(
 }
 
 /// The folder an MSI update of `existing` goes in: the one its copy is in, so an app installed into
-/// a chosen folder stays there. (The update service goes by the folder the package registered,
-/// `detect::windows::machine_install_folder`.)
-pub fn msi_update_folder(existing: &Installed) -> Option<PathBuf> {
+/// a chosen folder stays there (unless `msi_update_folder` finds that copy outside its record's
+/// scope). The update service goes by the folder the package registered,
+/// `detect::windows::machine_install_folder`.
+pub fn msi_copy_folder(existing: &Installed) -> Option<PathBuf> {
     let exe = Path::new(&existing.location);
     exe.parent().filter(|_| exe.is_absolute()).map(Path::to_path_buf)
 }
@@ -635,6 +657,12 @@ pub fn launch(app: &CraftApp, installed: &Installed, paths: &Paths) -> Result<()
         _ if cfg!(target_os = "macos") && path.extension().is_some_and(|e| e == "app") => process::open(path.as_os_str()),
         _ => {
             if !path.exists() {
+                if cfg!(windows) && installed.source == InstallSource::Msi && path.components().count() < 2 {
+                    return Err(format!(
+                        "{} is registered with Windows, but the launcher can't find where it put the program. Reinstall it from here.",
+                        app.name
+                    ));
+                }
                 return Err(format!("{} isn't where it was installed ({})", app.name, path.display()));
             }
             process::launch_binary(path, &[])
@@ -1872,6 +1900,16 @@ pub mod windows {
 mod tests {
     use super::*;
 
+    /// A folder found only by the launch fallback, in another scope, never reaches the installer.
+    #[cfg(windows)]
+    #[test]
+    fn an_update_takes_the_folder_only_from_the_records_own_scope() {
+        let folder = Some(PathBuf::from(r"C:\Users\a\AppData\Local\Programs\ArtCraft\DeckCraft"));
+        assert_eq!(keep_if_in_scope(folder.clone(), true), folder);
+        assert_eq!(keep_if_in_scope(folder, false), None);
+        assert_eq!(keep_if_in_scope(None, true), None);
+    }
+
     #[cfg(unix)]
     #[test]
     fn msi_install_uses_the_package_target_instead_of_a_symlinked_cache() {
@@ -1975,11 +2013,11 @@ mod tests {
         let exe = std::env::temp_dir().join("Craft Apps").join("PhotoCraft").join("photocraft.exe");
         let msi = |location: String| Installed { version: None, source: InstallSource::Msi, location, package: Some("{code}".into()) };
         let chosen = msi(exe.display().to_string());
-        assert_eq!(msi_update_folder(&chosen), exe.parent().map(Path::to_path_buf));
+        assert_eq!(msi_copy_folder(&chosen), exe.parent().map(Path::to_path_buf));
         let locations = InstallLocations::default();
-        assert_eq!(destination(app, PackageKind::Msi, Some(&chosen), None, &locations).unwrap(), msi_update_folder(&chosen));
+        assert_eq!(destination(app, PackageKind::Msi, Some(&chosen), None, &locations).unwrap(), msi_copy_folder(&chosen));
         // Only the app's name is known (no exe found): the package's own folder.
-        assert_eq!(msi_update_folder(&msi(app.name.to_string())), None);
+        assert_eq!(msi_copy_folder(&msi(app.name.to_string())), None);
     }
 
     #[test]
