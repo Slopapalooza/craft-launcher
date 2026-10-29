@@ -298,7 +298,7 @@ impl Engine {
     fn apply_machine(&self, app: &CraftApp, release: &Release, asset: &Asset, stop: &Stop, phase: &mut dyn FnMut(JobPhase)) -> Result<bool, String> {
         // The file is the release's own (its name and tag say the release's version), before a byte comes.
         install::bind_artifact_version(app, release, asset)?;
-        let file = install::download(release, asset, &mut self.job(stop, phase))?;
+        let (file, _) = install::download(release, asset, &mut self.job(stop, phase))?;
         let names: Vec<&str> = app.names().collect();
         let expect = crate::msi::Expect { names, version: release.version.as_ref(), signer: Some(crate::msi::SIGNER_SUBJECT) };
         // A download that matches its checksum but fails these is kept (the next run would only
@@ -388,7 +388,7 @@ impl Engine {
     pub fn start_own_update(&self, launcher: &Release, asset: &Asset, stop: &Stop) -> Result<(), String> {
         // In ArtCraft Launcher's release: its tag and the file's name in the link must be the release's.
         install::bind_artifact_version(&LAUNCHER, launcher, asset)?;
-        let file = install::download(launcher, asset, &mut self.job(stop, &mut |_| {}))?;
+        let (file, _) = install::download(launcher, asset, &mut self.job(stop, &mut |_| {}))?;
         let expect = crate::msi::Expect {
             names: vec![crate::service::DISPLAY_NAME],
             version: launcher.version.as_ref(),
