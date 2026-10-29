@@ -17,7 +17,7 @@
 use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
-use artcraft_launcher_core::catalog::LAUNCHER;
+use artcraft_launcher_core::catalog::{AppKind, LAUNCHER};
 use artcraft_launcher_core::feed::{Feed, FeedAnswer};
 use artcraft_launcher_core::platform::{Platform, pick_asset};
 use artcraft_launcher_core::protocol::{BackendOptions, CANCELLED, INSTALL_CANCELLED, JobPhase, LatestRelease, PAUSED};
@@ -422,6 +422,11 @@ fn decide(
         Scope::Machine if inst.source != InstallSource::Msi => {
             return Plan::Blocked("not installed for all users with the Windows Installer".into());
         }
+        // The service installs only packages the Craft Apps' publisher signed (`msi::SIGNER_SUBJECT`).
+        // A community app signs its own, so the launcher updates it, with Windows asking for permission.
+        Scope::Machine if app.kind == AppKind::Community => {
+            return Plan::Blocked("a community app, which the launcher updates itself".into());
+        }
         Scope::User => {
             if let Some(why) = install::managed_elsewhere(app, inst, false) {
                 return Plan::Blocked(why);
@@ -517,6 +522,17 @@ mod tests {
             let p = plan_for(Some(&installed(source, "0.8.1")), &latest, Scope::Machine);
             assert!(matches!(p, Plan::Blocked(ref why) if why.contains("all users")), "{source:?}: {p:?}");
         }
+    }
+
+    /// A community app's installer isn't signed by the Craft Apps' publisher: the service never
+    /// downloads it only to refuse it.
+    #[test]
+    fn the_service_leaves_community_apps_to_the_launcher() {
+        let solid = CraftApp::by_id("solidcraft").unwrap();
+        let inst = installed(InstallSource::Msi, "0.1.0");
+        let latest = LatestRelease::Found(release("0.2.0"));
+        let p = decide(solid, Some(&inst), &latest, Scope::Machine, WINDOWS, &BackendOptions::default(), None);
+        assert!(matches!(p, Plan::Blocked(ref why) if why.contains("community")), "{p:?}");
     }
 
     #[test]

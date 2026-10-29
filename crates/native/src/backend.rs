@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use artcraft_launcher_core::catalog::{LAUNCHER, LAUNCHER_ID};
+use artcraft_launcher_core::catalog::{AppKind, LAUNCHER, LAUNCHER_ID};
 use artcraft_launcher_core::feed::{Feed, FeedAnswer};
 use artcraft_launcher_core::platform::{Arch, Os, Platform, pick_asset};
 use artcraft_launcher_core::protocol::{
@@ -582,10 +582,10 @@ fn run_install(
 
 /// On Windows, the update of an app installed for all users goes to the ArtCraft Launcher Update
 /// Service when one is running, which installs it without a UAC prompt (`service`). `None` when
-/// it's not one for the service (a new install, no service, an install for one user): the launcher
-/// installs it itself, as before.
+/// it's not one for the service (a new install, no service, an install for one user, a community
+/// app, whose installer the service doesn't trust): the launcher installs it itself, as before.
 fn via_service(service: bool, app: &CraftApp, shared: &Shared, existing: Option<&Installed>, stop: &Stop) -> Option<Result<String, String>> {
-    let inst = existing.filter(|i| service && i.source == InstallSource::Msi)?;
+    let inst = existing.filter(|i| service && i.source == InstallSource::Msi && app.kind == AppKind::Official)?;
     #[cfg(windows)]
     let machine = crate::detect::windows::machine_install(app);
     #[cfg(not(windows))]
