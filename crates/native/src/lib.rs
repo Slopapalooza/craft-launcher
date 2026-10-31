@@ -21,6 +21,7 @@ pub mod msi;
 mod msi_context;
 pub mod packages;
 pub mod paths;
+pub mod pins;
 pub mod policy;
 #[cfg(windows)]
 pub mod portable;

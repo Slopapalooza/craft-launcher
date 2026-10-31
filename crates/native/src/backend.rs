@@ -137,6 +137,9 @@ pub struct NativeBackend {
     /// Works with the ArtCraft Launcher Update Service when one is running (Windows; never in
     /// tests, which mustn't reach a real one).
     service: bool,
+    /// The version-choice file the apps read (see [`crate::pins`]); `None` when there is no
+    /// per-user data folder.
+    pins: Option<std::path::PathBuf>,
 }
 
 impl NativeBackend {
@@ -179,7 +182,11 @@ impl NativeBackend {
             last_check: Mutex::new(None),
             machine_auto_update: Mutex::new(None),
         });
-        let backend = Self { shared, paths, http, source, platform: native_platform(), service: cfg!(windows) };
+        let pins = craft_update::pins::Pins::default_path();
+        if let Some(path) = &pins {
+            crate::pins::prepare_folder(path);
+        }
+        let backend = Self { shared, paths, http, source, platform: native_platform(), service: cfg!(windows), pins };
         backend.replay_cache();
         backend.detect_all();
         backend.refresh_machine_auto_update();
@@ -1301,6 +1308,15 @@ impl Backend for NativeBackend {
                     *o = options;
                     changed
                 };
+                // Every Configure, not only on a change: the first one carries the choices saved
+                // before the shared file existed, and the file may have been deleted since.
+                if let Some(path) = &self.pins {
+                    match crate::pins::sync(path, &self.options().versions) {
+                        Ok(true) => log::info!("version choices written to {}", path.display()),
+                        Ok(false) => {}
+                        Err(e) => log::warn!("couldn't write the version choices: {e}"),
+                    }
+                }
                 // Another package format means another file to download.
                 let options = self.options();
                 for app in &SUITE {
@@ -1804,7 +1820,15 @@ mod tests {
         let shared = shared();
         shared.latest.lock().unwrap().insert(APP.to_string(), release("0.5.0"));
         let shared = Arc::new(shared);
-        NativeBackend { shared, paths: Paths::under(root), http: None, source, platform: Some(platform), service: false }
+        NativeBackend {
+            shared,
+            paths: Paths::under(root),
+            http: None,
+            source,
+            platform: Some(platform),
+            service: false,
+            pins: Some(root.join("versions.json")),
+        }
     }
 
     /// Reports again, and returns what the UI was last told about a kept download.
@@ -1984,6 +2008,21 @@ mod tests {
         backend.shared.latest.lock().unwrap().insert(APP.to_string(), release("0.6.0"));
         backend.send(Command::Configure(BackendOptions::default()));
         assert_eq!(last_ready(backend.poll()), Some(false));
+    }
+
+    #[test]
+    fn the_settings_reach_the_file_the_apps_read() {
+        let Some(platform) = native_platform() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend = backend(dir.path(), platform, None);
+        let mut options = BackendOptions::default();
+        options.versions.insert("pdfcraft".into(), VersionTrack::Pinned("v0.13.0".into()));
+        backend.send(Command::Configure(options));
+        let pins = craft_update::pins::Pins::load(&dir.path().join("versions.json"));
+        assert_eq!(pins.track("pdfcraft"), Some(craft_update::pins::VersionTrack::Pinned("v0.13.0".into())));
+        backend.send(Command::Configure(BackendOptions::default()));
+        let pins = craft_update::pins::Pins::load(&dir.path().join("versions.json"));
+        assert_eq!(pins.choice("pdfcraft"), craft_update::pins::Choice::Stable);
     }
 
     #[test]
