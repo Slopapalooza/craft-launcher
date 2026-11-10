@@ -7,12 +7,16 @@
   </a>
 </p>
 
+<p align="center">
+  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.artcraft-launcher.png" width="128" height="128" alt="ArtCraft Launcher icon: a blue stylised letter A">
+</p>
+
 <h1 align="center">ArtCraft Launcher</h1>
 
 <p align="center">
   <b>One place to install, update and open every app in the Craft App Suite, rebuilt in pure Rust.</b><br>
-  PhotoCraft, LightCraft, FilmCraft, DesignCraft, VectorCraft, PdfCraft, EffectCraft, WordCraft,<br>
-  DeckCraft, GridCraft, CADCraft, SoundCraft and FigCraft: the right build for your computer, kept up to date.
+  PhotoCraft, LightCraft, FilmCraft, DesignCraft, VectorCraft, PdfCraft, EffectCraft, AniCraft, WordCraft,<br>
+  DeckCraft, GridCraft, CADCraft, SoundCraft, FigCraft, Craft Anything, TextureCraft, MaterialCraft and the community apps SolidCraft and MailCraft: the right build for your computer, kept up to date.
 </p>
 
 <p align="center">
@@ -20,6 +24,9 @@
   <img alt="macOS · Windows · Linux · FreeBSD · Web" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20FreeBSD%20%C2%B7%20Web-native-26282e?style=flat-square">
   <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-3a3a3a?style=flat-square">
   <img alt="Status: early alpha" src="https://img.shields.io/badge/status-early%20alpha-d69e2e?style=flat-square">
+  <br>
+  <a href="https://sonarcloud.io/project/overview?id=storytold_craft-launcher"><img alt="Scanned by SonarCloud" src="https://img.shields.io/badge/Scanned_by-SonarCloud-4b9fd5?style=flat-square&logo=sonarqubecloud&logoColor=white"></a>
+  <a href="https://coderabbit.ai"><img alt="Reviewed by CodeRabbit" src="https://img.shields.io/coderabbit/prs/github/storytold/craft-launcher?style=flat-square&label=Reviewed%20by%20CodeRabbit&logo=coderabbit"></a>
 </p>
 
 <p align="center">
@@ -85,23 +92,30 @@ The web version shows the same catalog in the browser, with the latest download 
 ## Interface languages
 
 The interface is in English, Brazilian Portuguese (Português (Brasil)), Czech (Čeština), French
-(Français), German (Deutsch), Hungarian (Magyar), Japanese (日本語), Polish (Polski), Russian
-(Русский), Simplified Chinese (简体中文) or Spanish (Español). **Auto**, the default, follows the
-system or browser language; **Settings → Language** picks one and switches at once, and the choice
-is kept between runs. Czech locales (`cs-CZ`, `cs_CZ.UTF-8`…) select Czech, German ones (`de-DE`,
-`de-AT`, `de-CH`, `de_DE.UTF-8`…) German, French ones (`fr-FR`, `fr-CA`…) French, Hungarian ones
-(`hu`, `hu-HU`, `hu_HU.UTF-8`…) Hungarian, Japanese ones (`ja`, `ja-JP`, `ja_JP.UTF-8`…) Japanese,
-Polish ones (`pl`, `pl-PL`, `pl_PL.UTF-8`) Polish, Spanish ones (`es-ES`, `es-MX`, `es-419`…)
-Spanish, and Portuguese ones (`pt-BR`, and `pt-PT` too, for now) Brazilian Portuguese. Simplified
-Chinese locales (`zh-CN`, `zh-SG`, `zh-Hans`, and POSIX forms such as `zh_CN.UTF-8`) select
-Chinese; Traditional Chinese ones don't. To try a language without changing the setting, start the
-desktop app with `ARTCRAFT_LAUNCHER_LOCALE=pt-BR`, or add `?lang=ru` to the web address.
+(Français), Georgian (ქართული), German (Deutsch), Hungarian (Magyar), Japanese (日本語), Polish
+(Polski), Russian (Русский), Simplified Chinese (简体中文), Traditional Chinese (繁體中文) or Spanish
+(Español). **Auto**, the default, follows the system or browser language; **Settings → Language**
+picks one and switches at once, and the choice is kept between runs. Czech locales (`cs-CZ`,
+`cs_CZ.UTF-8`…) select Czech, Georgian ones (`ka`, `ka-GE`, `ka_GE.UTF-8`…) Georgian, German ones
+(`de-DE`, `de-AT`, `de-CH`, `de_DE.UTF-8`…) German, French ones (`fr-FR`, `fr-CA`…) French, Hungarian
+ones (`hu`, `hu-HU`, `hu_HU.UTF-8`…) Hungarian, Japanese ones (`ja`, `ja-JP`, `ja_JP.UTF-8`…)
+Japanese, Polish ones (`pl`, `pl-PL`, `pl_PL.UTF-8`) Polish, Spanish ones (`es-ES`, `es-MX`,
+`es-419`…) Spanish, and Portuguese ones (`pt-BR`, and `pt-PT` too, for now) Brazilian Portuguese.
+Simplified Chinese locales (`zh-CN`, `zh-SG`, `zh-Hans`, and POSIX forms such as `zh_CN.UTF-8`)
+select Simplified Chinese; Traditional Chinese ones (`zh-TW`, `zh-HK`, `zh-MO`, `zh-Hant`, and POSIX
+forms such as `zh_TW.UTF-8`) select Traditional Chinese, with an explicit script winning over the
+region. To try a language without changing the setting, start the desktop app with
+`ARTCRAFT_LAUNCHER_LOCALE=pt-BR`, or add `?lang=ru` to the web address.
 
 The CJK languages are drawn with the system's own CJK font (Hiragino Sans or PingFang on macOS,
 Yu Gothic, Meiryo or Microsoft YaHei on Windows, Noto Sans CJK, IPA, Takao or WenQuanYi on Linux and
-FreeBSD). Where the system has no font for one, and in the web version, the interface stays in
-English and Settings says why. Product names and release notes stay as published; text without a
-translation falls back to English.
+FreeBSD); Traditional Chinese prefers an installed Noto Sans CJK TC, then PingFang TC, Microsoft
+JhengHei or MingLiU. Georgian is drawn the same way, with the system's Georgian font (SF Georgian or
+Arial Unicode on macOS, Sylfaen on Windows, Noto Sans Georgian or DejaVu Sans on Linux and FreeBSD).
+Where the system has no font for one, and in the web version, the interface stays in English and
+Settings says why. Product names and release notes stay as published; text without a translation
+falls back to English. See [`docs/localization-zh-hant.md`](docs/localization-zh-hant.md) for the
+Traditional Chinese catalog and font details.
 
 ## Where apps are installed
 
@@ -112,7 +126,7 @@ installed by hand (and the launcher finds apps you installed yourself):
 | System | Where | How |
 |---|---|---|
 | macOS | `/Applications/<App>.app` | Copied from the signed, notarized release DMG |
-| Windows | `C:\Program Files\<App>` | The release MSI, through Windows Installer (with Start menu entry and Apps & features entry) |
+| Windows | `C:\Program Files\ArtCraft\<App>` (`Program Files (x86)` for a 32-bit build) | The release MSI, through Windows Installer, for everyone on the computer (with Start menu entry and Apps & features entry). Windows asks for administrator permission for each new install. An app already installed for your account only (`%LOCALAPPDATA%\Programs\ArtCraft\<App>`) keeps its folder and scope when updated; to move it, uninstall it and install it again |
 | Linux | `/usr/bin`, `/usr/share/applications` | The release `.deb` (apt) or `.rpm` (dnf, zypper), with your system's password prompt. Without those, a Flatpak, or an AppImage in `~/Applications` |
 | Linux, inside the launcher's Flatpak, with no Flatpak on the host | `~/.var/app/ai.storyteller.artcraft-launcher/data/artcraft-launcher/apps/<app>` | The release tarball, unpacked into the launcher's own folder and run inside the same sandbox, with its settings in a `home/` folder beside it. Nothing is installed on the host, and each app's configuration stays in the sandbox |
 | FreeBSD | `/usr/local` | The release tree, with a password prompt (polkit); `~/.local` when polkit isn't installed |
@@ -123,6 +137,65 @@ package or portable folder, the AppImage, or the `.deb`/`.rpm`) and reopens it.
 
 Updates use the same format an app was installed with. Every download is checked against the
 release's published SHA-256 before it is installed, and a running app is never replaced.
+
+## Updates without an administrator prompt (Windows)
+
+On Windows the Craft Apps install for every user, into Program Files, so each update needs
+administrator permission: a UAC prompt every time. The **ArtCraft Launcher Update Service** is the
+opt-in way round it. An administrator installs it once, from
+`artcraft-launcher-updater-<ver>-windows-{x64,arm64,x86}.msi` (Windows asks for permission for
+that install). From then on:
+
+- **Updates install in the background once an administrator turns that on.** It's one setting for
+  the whole computer. In ArtCraft Launcher, **Settings → Updates → Automatically download and
+  install updates** shows it, and changing it there asks for administrator permission (UAC): other
+  people on the computer see it, but can't turn it off, or on, without an administrator's password.
+  Turned on, the service installs the updates of the apps installed for all users as they come out
+  (it checks every 6 hours), even while the launcher is closed, leaving any app that's open until
+  it's closed. An administrator can also set it with `artcraft-launcher-updater set auto-update
+  on|off` in an administrator terminal, when installing the service (`AUTOUPDATE=1`), or by Group
+  Policy, which locks it.
+- **The launcher's Update button needs no prompt.** The launcher hands the update to the service and
+  shows its progress as usual. Without the service, it installs the update itself, with the prompt.
+- **There's a command line**, on the `PATH`: `artcraft-launcher-updater check` looks for updates,
+  `artcraft-launcher-updater update` installs them (all of them, or only the apps named:
+  `artcraft-launcher-updater update photocraft wordcraft`), and `artcraft-launcher-updater status`
+  shows the service's settings, its last check and how each update went. `--json` prints the result
+  for scripts. `check` exits with 100 when updates are available, 0 when there are none, 1 when it
+  couldn't check.
+
+What the service will and won't do, since it runs as LocalSystem:
+
+- It only **updates** Craft Apps an administrator already installed for all users, and only to a
+  **newer** release. Installing a new app still goes through the launcher and its UAC prompt.
+- It downloads only from the apps' own `storytold/<app>` GitHub releases (as the launcher does), into
+  a folder in the system's own profile that users can't write to. Before running a package it checks
+  the release's published SHA-256, that Windows finds the package's Authenticode signature valid and
+  made by Learning Machines Inc (the Craft Apps' publisher: the certificate's whole subject,
+  `CN=Learning Machines Inc, O=Learning Machines Inc, L=Atlanta, S=Georgia, C=US`, not just the
+  name), and that the package is that app at that version. Community apps (SolidCraft) sign their
+  own packages, so it leaves them to the launcher, which updates them with the UAC prompt.
+- The launcher and the command line reach it over a loopback connection (port 47414), and believe
+  only the service's own process there (as Windows reports which process holds each end), not
+  another program that took the port while the service was stopped. Requests name apps by id,
+  nothing else: never a path, a download link or a version. The most another program on the
+  computer can do through it is start a check or a pending update sooner, or postpone one.
+
+Settings live in `HKLM\SOFTWARE\Learning Machines LLC\ArtCraft Launcher Updater`. Give them to the
+installer (`msiexec /i artcraft-launcher-updater-<ver>-windows-x64.msi AUTOUPDATE=1`, kept by later
+versions) or set them by Group Policy as DWORDs under
+`HKLM\SOFTWARE\Policies\Learning Machines LLC\ArtCraft Launcher Updater`, which wins:
+
+| Setting (property / value) | Default | Meaning |
+|---|---|---|
+| `AUTOUPDATE` / `AutoUpdate` | 0 | 1: install updates in the background. 0: only when the launcher or the command line asks. ArtCraft Launcher's "Automatically download and install updates" shows this, and changes it with administrator permission |
+| `ALLOWREQUESTS` / `AllowRequests` | 1 | Let the launcher and the command line ask for checks and updates. 0: the schedule only |
+| `CHECKINTERVALHOURS` / `CheckIntervalHours` | 6 | Hours between checks (1 to 168) |
+| `PRERELEASES` / `Prereleases` | 0 | 1 offers pre-releases as updates |
+
+The service writes its log to `C:\Windows\System32\config\systemprofile\AppData\Local\ArtCraft Launcher Updater\logs\artcraft-launcher-updater.log`,
+and each Windows Installer run's log beside it (`msi-<app>.log`). Uninstall it from
+**Settings → Apps** like any other app; the launcher goes back to asking for permission.
 
 The launcher writes its log to `logs/artcraft-launcher.log` in its data folder
 (`~/.local/share/artcraft-launcher` on Linux, `~/Library/Application Support/ArtCraft Launcher`
@@ -142,6 +215,7 @@ Download the build for your computer from the [latest release](https://github.co
 | `artcraft-launcher-<ver>-windows-arm64.msi` | Installer for Windows on Arm (Snapdragon and other Arm PCs) |
 | `artcraft-launcher-<ver>-windows-x86.msi` | Installer for 32-bit Windows |
 | `artcraft-launcher-<ver>-windows-{x64,arm64,x86}-portable.zip` | No install: unzip and run `artcraft-launcher.exe`. Keeps its settings in the folder |
+| `artcraft-launcher-updater-<ver>-windows-{x64,arm64,x86}.msi` | Optional, for administrators: the [ArtCraft Launcher Update Service](#updates-without-an-administrator-prompt-windows), which installs app updates without a UAC prompt each time, and the `artcraft-launcher-updater` command line |
 
 **macOS** (11 Big Sur or later)
 
@@ -190,14 +264,32 @@ You need a recent stable Rust (1.90 or newer). On Linux, install the windowing h
 git clone https://github.com/storytold/craft-launcher
 cd craft-launcher
 cargo run --release -p artcraft-launcher   # the desktop app
+cargo run -p artcraft-launcher-updater -- check   # the command line (the update service is Windows only)
 cargo xtask ci                             # fmt, clippy, tests and the wasm check
 ```
 
-The web version builds with [trunk](https://trunkrs.dev/):
+The web version builds with [trunk](https://trunk-rs.github.io/trunk/):
 
 ```sh
 rustup target add wasm32-unknown-unknown
 cd apps/artcraft-launcher-web && trunk serve
+```
+
+### Nix (experimental)
+
+`flake.nix` gives a dev shell (`nix develop`, then the cargo commands above) and a package:
+
+```sh
+nix run github:storytold/craft-launcher
+```
+
+On NixOS this uses the system's graphics drivers. On other distros, a Nix-built program can't load
+the host's GPU drivers, so the window may fail to open. Run it through
+[nixGL](https://github.com/nix-community/nixGL) instead (NVIDIA needs nixGL's matching NVIDIA
+variant), or use the AppImage, `.deb` or `.rpm` release:
+
+```sh
+nix run --impure github:nix-community/nixGL -- nix run github:storytold/craft-launcher
 ```
 
 ### Installing your own builds
@@ -233,23 +325,27 @@ ArtCraft Launcher installs the **Craft App Suite**: free, open-source creative t
 [ArtCraft](https://getartcraft.com/) team, each written from scratch in Rust and each able to
 stand on its own.
 
-| | App | What it's for | Code | Learn more |
-|:-:|---|---|---|---|
-| <img src="https://raw.githubusercontent.com/storytold/photocraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.photocraft.png" alt="" width="32" height="32"> | **PhotoCraft** | Image editing: layers, masks, type and real PSD files | [GitHub](https://github.com/storytold/photocraft) | [Website](https://getartcraft.com/apps/photocraft) |
-| <img src="https://raw.githubusercontent.com/storytold/vectorcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.vectorcraft.png" alt="" width="32" height="32"> | **VectorCraft** | Vector illustration | [GitHub](https://github.com/storytold/vectorcraft) | [Website](https://getartcraft.com/apps/vectorcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/filmcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.filmcraft.png" alt="" width="32" height="32"> | **FilmCraft** | Video editing, color and sound | [GitHub](https://github.com/storytold/filmcraft) | [Website](https://getartcraft.com/apps/filmcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/lightcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.lightcraft.png" alt="" width="32" height="32"> | **LightCraft** | Photo library and raw development | [GitHub](https://github.com/storytold/lightcraft) | [Website](https://getartcraft.com/apps/lightcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/pdfcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.pdfcraft.png" alt="" width="32" height="32"> | **PdfCraft** | Reading, organizing and protecting PDFs | [GitHub](https://github.com/storytold/pdfcraft) | [Website](https://getartcraft.com/apps/pdfcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/effectcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.effectcraft.png" alt="" width="32" height="32"> | **EffectCraft** | Motion graphics and visual effects | [GitHub](https://github.com/storytold/effectcraft) | [Website](https://getartcraft.com/apps/effectcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/designcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.designcraft.png" alt="" width="32" height="32"> | **DesignCraft** | Page layout and publishing | [GitHub](https://github.com/storytold/designcraft) | [Website](https://getartcraft.com/apps/designcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/gridcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.gridcraft.png" alt="" width="32" height="32"> | **GridCraft** | Spreadsheets and data | [GitHub](https://github.com/storytold/gridcraft) | [Website](https://getartcraft.com/apps/gridcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/wordcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.wordcraft.png" alt="" width="32" height="32"> | **WordCraft** | Word processing and documents | [GitHub](https://github.com/storytold/wordcraft) | [Website](https://getartcraft.com/apps/wordcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/deckcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.deckcraft.png" alt="" width="32" height="32"> | **DeckCraft** | Presentations and slide decks | [GitHub](https://github.com/storytold/deckcraft) | [Website](https://getartcraft.com/apps/deckcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/cadcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.cadcraft.png" alt="" width="32" height="32"> | **CADCraft** | Computer-aided design | [GitHub](https://github.com/storytold/cadcraft) | [Website](https://getartcraft.com/apps/cadcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/soundcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.soundcraft.png" alt="" width="32" height="32"> | **SoundCraft** | Audio recording and editing | [GitHub](https://github.com/storytold/soundcraft) | [Website](https://getartcraft.com/apps/soundcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/figcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.figcraft.png" alt="" width="32" height="32"> | **FigCraft** | Interface design and prototyping | [GitHub](https://github.com/storytold/figcraft) | [Website](https://getartcraft.com/apps/figcraft) |
-
-And [**ArtCraft**](https://getartcraft.com/) itself, our AI image and video studio for artists who want real control.
+|                                                                                                                                                                                            | App                 | What it's for                                         | Code                                                  | Learn more                                                 |
+|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:--------------------|:------------------------------------------------------|:------------------------------------------------------|:-----------------------------------------------------------|
+| <img src="https://raw.githubusercontent.com/storytold/photocraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.photocraft.png" alt="" width="32" height="32">                     | **PhotoCraft**      | Image editing: layers, masks, type and real PSD files | [GitHub](https://github.com/storytold/photocraft)     | [Website](https://getartcraft.com/apps/photocraft)         |
+| <img src="https://raw.githubusercontent.com/storytold/vectorcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.vectorcraft.png" alt="" width="32" height="32">                   | **VectorCraft**     | Vector illustration                                   | [GitHub](https://github.com/storytold/vectorcraft)    | [Website](https://getartcraft.com/apps/vectorcraft)        |
+| <img src="https://raw.githubusercontent.com/storytold/filmcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.filmcraft.png" alt="" width="32" height="32">                       | **FilmCraft**       | Video editing, color and sound                        | [GitHub](https://github.com/storytold/filmcraft)      | [Website](https://getartcraft.com/apps/filmcraft)          |
+| <img src="https://raw.githubusercontent.com/storytold/lightcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.lightcraft.png" alt="" width="32" height="32">                     | **LightCraft**      | Photo library and raw development                     | [GitHub](https://github.com/storytold/lightcraft)     | [Website](https://getartcraft.com/apps/lightcraft)         |
+| <img src="https://raw.githubusercontent.com/storytold/pdfcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.pdfcraft.png" alt="" width="32" height="32">                         | **PdfCraft**        | Reading, organizing and protecting PDFs               | [GitHub](https://github.com/storytold/pdfcraft)       | [Website](https://getartcraft.com/apps/pdfcraft)           |
+| <img src="https://raw.githubusercontent.com/storytold/effectcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.effectcraft.png" alt="" width="32" height="32">                   | **EffectCraft**     | Motion graphics and visual effects                    | [GitHub](https://github.com/storytold/effectcraft)    | [Website](https://getartcraft.com/apps/effectcraft)        |
+| <img src="https://raw.githubusercontent.com/storytold/AniCraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.anicraft.png" alt="" width="32" height="32">                         | **AniCraft**        | 2D vector animation                                   | [GitHub](https://github.com/storytold/AniCraft)       | [Project page](https://github.com/storytold/anicraft)     |
+| <img src="https://raw.githubusercontent.com/storytold/designcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.designcraft.png" alt="" width="32" height="32">                   | **DesignCraft**     | Page layout and publishing                            | [GitHub](https://github.com/storytold/designcraft)    | [Website](https://getartcraft.com/apps/designcraft)        |
+| <img src="https://raw.githubusercontent.com/storytold/figcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.figcraft.png" alt="" width="32" height="32">                         | **FigCraft**        | Interface design and prototyping                      | [GitHub](https://github.com/storytold/figcraft)       | [Website](https://getartcraft.com/apps/figcraft)           |
+| <img src="https://raw.githubusercontent.com/storytold/wordcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.wordcraft.png" alt="" width="32" height="32">                       | **WordCraft**       | Word processing and documents                         | [GitHub](https://github.com/storytold/wordcraft)      | [Website](https://getartcraft.com/apps/wordcraft)          |
+| <img src="https://raw.githubusercontent.com/storytold/soundcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.soundcraft.png" alt="" width="32" height="32">                     | **SoundCraft**      | Audio recording and editing                           | [GitHub](https://github.com/storytold/soundcraft)     | [Website](https://getartcraft.com/apps/soundcraft)         |
+| <img src="https://raw.githubusercontent.com/storytold/deckcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.deckcraft.png" alt="" width="32" height="32">                       | **DeckCraft**       | Presentations and slide decks                         | [GitHub](https://github.com/storytold/deckcraft)      | [Website](https://getartcraft.com/apps/deckcraft)          |
+| <img src="https://raw.githubusercontent.com/storytold/cadcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.cadcraft.png" alt="" width="32" height="32">                         | **CADCraft**        | Computer-aided design                                 | [GitHub](https://github.com/storytold/cadcraft)       | [Website](https://getartcraft.com/apps/cadcraft)           |
+| <img src="https://raw.githubusercontent.com/storytold/gridcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.gridcraft.png" alt="" width="32" height="32">                       | **GridCraft**       | Spreadsheets and data                                 | [GitHub](https://github.com/storytold/gridcraft)      | [Website](https://getartcraft.com/apps/gridcraft)          |
+| <img src="https://raw.githubusercontent.com/storytold/texturecraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.texturecraft.png" alt="" width="32" height="32">                 | **TextureCraft**    | 3D texture painting                                   | [GitHub](https://github.com/storytold/texturecraft)   | [Website](https://getartcraft.com/apps/texturecraft)       |
+| <img src="https://raw.githubusercontent.com/storytold/materialcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.materialcraft.png" alt="" width="32" height="32">               | **MaterialCraft**   | Procedural material design                            | [GitHub](https://github.com/storytold/materialcraft)  | [Project page](https://github.com/storytold/materialcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/craft-anything/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.craft-anything.png" alt="" width="32" height="32">             | **Craft Anything**  | See how any software works, then build your own       | [GitHub](https://github.com/storytold/craft-anything) | [Website](https://getartcraft.com/apps/craft-anything)     |
+| <img src="https://raw.githubusercontent.com/tangency-labs/solidcraft/main/assets/icons/app/linux/exports/hicolor/64x64/apps/io.tangencylabs.solidcraft.png" alt="" width="32" height="32"> | **SolidCraft**      | Parametric 3D CAD by Tangency Labs (community app)    | [GitHub](https://github.com/tangency-labs/solidcraft) |                                                            |
+| <img src="https://raw.githubusercontent.com/UCS-Care-Group/mailcraft/main/assets/app-icon/hicolor/64x64/apps/io.github.billsecond.mailcraft.png" alt="" width="32" height="32"> | **MailCraft** | Mail, calendar and contacts by UCS Care Group (community app) | [GitHub](https://github.com/UCS-Care-Group/mailcraft) | [Website](https://mailcraft.work) |
 
 <br>
 
